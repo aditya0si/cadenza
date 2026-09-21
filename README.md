@@ -82,8 +82,14 @@ pause, seek and queue. State changes broadcast `playback:state` (the authoritati
 lookup when the token carries no email claim, and `verifyWebhook` (Standard Webhooks signature) for the
 `/api/webhooks/clerk` endpoint that mirrors users into Mongo. Both are injected through
 `IdentityVerifier` / `WebhookVerifier` interfaces — tests and the e2e script substitute a documented
-demo-session verifier and an HMAC webhook verifier, and the demo route 404s whenever `AUTH_MODE=clerk`, so
-there is no bypass in the production path.
+demo-session verifier and an HMAC webhook verifier, and the demo route 404s whenever `AUTH_MODE=clerk`.
+
+**Production fails closed.** `loadEnv()` refuses to boot when `NODE_ENV=production` is combined with
+`AUTH_MODE=demo`, and when `MEDIA_SIGNING_SECRET` or `DEMO_AUTH_SECRET` still hold the development
+placeholder committed in this repository (`.env.example`). Both refusals are asserted in
+`server/tests/unit/env.test.ts` and end-to-end in `npm run e2e` (which boots `server/dist/index.js` with
+production env vars and requires exit 1). So the demo path cannot become a production bypass — not by a
+stale `.env`, and not by a forgotten `AUTH_MODE`.
 
 ## Setup
 
@@ -115,12 +121,17 @@ Environment variables (see `.env.example` for the annotated list):
 | `PLAYBACK_DRIFT_THRESHOLD_MS` | `750` | drift beyond this is snapped back |
 | `RATE_LIMIT_*` | see `.env.example` | HTTP rate-limit buckets (auth/write/read) |
 | `SOCKET_CHAT_BURST`, `SOCKET_CHAT_REFILL_PER_SEC`, `SOCKET_QUEUE_BURST`, `SOCKET_QUEUE_REFILL_PER_SEC` | `10/2`, `30/5` | per-socket token buckets for chat and queue events |
+| `SOCKET_REPORT_BURST`, `SOCKET_REPORT_REFILL_PER_SEC` | `60`, `20` | the same bucket for `playback:report` drift reports |
+| `SOCKET_MAX_PAYLOAD_BYTES` | `65536` | hard ceiling on one socket payload (`maxHttpBufferSize`); larger frames are refused with WebSocket close 1009 |
 | `VITE_API_URL`, `VITE_SOCKET_URL`, `VITE_AUTH_MODE`, `VITE_CLERK_PUBLISHABLE_KEY` | local defaults | client build-time config |
 
-**Demo mode.** With no Clerk keys the app boots with `AUTH_MODE=demo` / `VITE_AUTH_MODE=demo`: the sign-in
-page offers two demo personas (`demo@cadenza.dev`, `admin@cadenza.dev`) and the API issues a locally-signed
-12-hour session. The UI shows a permanent amber **DEMO MODE** banner, and `POST /api/auth/demo-session`
-returns 404 as soon as `AUTH_MODE=clerk`. Real Clerk stays wired for real keys.
+**Demo mode.** `npm run demo` sets `AUTH_MODE=demo` for the **API only** (`scripts/demo_boot.mjs` passes it
+into `loadEnv`); the client reaches demo mode through `resolveAuthMode()`'s no-publishable-key fallback
+(`client/src/auth/AuthProvider.tsx`) — i.e. the bundle is in demo mode because no `VITE_CLERK_PUBLISHABLE_KEY`
+was compiled into it, not because `VITE_AUTH_MODE` was set. The sign-in page then offers two demo personas
+(`demo@cadenza.dev`, `admin@cadenza.dev`) and the API issues a locally-signed 12-hour session. The UI shows a
+permanent amber **DEMO MODE** banner, and `POST /api/auth/demo-session` returns 404 as soon as
+`AUTH_MODE=clerk`. Real Clerk stays wired for real keys, and production refuses demo mode outright (above).
 
 ## API reference
 
@@ -150,9 +161,9 @@ returns 404 as soon as `AUTH_MODE=clerk`. Real Clerk stays wired for real keys.
 | PUT | `/api/playlists/:id/order` | owner/admin | replace the track order (drag-to-reorder) |
 | GET | `/api/rooms` | optional | active public rooms with member/queue counts |
 | POST | `/api/rooms` | session | create a room (creator becomes host) |
-| GET | `/api/rooms/:id` | session | room snapshot + recent chat |
-| POST | `/api/rooms/:id/join`, `/leave` | session | join (idempotent) / leave (host handover) |
-| POST | `/api/rooms/:id/queue` | member | queue a track (idempotent by `eventId`) |
+| GET | `/api/rooms/:id` | session | room metadata + queue for anyone who may see the room; recent chat **members only** (empty array otherwise) |
+| POST | `/api/rooms/:id/join`, `/leave` | session | join (idempotent) / leave (host handover, and the caller's sockets are evicted) |
+| POST | `/api/rooms/:id/queue` | member | queue a track (idempotent per member + `eventId`) |
 | DELETE | `/api/rooms/:id/queue/:songId` | member | remove a queued track |
 | GET | `/api/rooms/:id/messages` | member | chat history, keyset pagination (`before`, `limit`) |
 | GET | `/api/stats/overview` \| `/plays` \| `/top-tracks` \| `/active-rooms` | admin | dashboard aggregations |
@@ -176,6 +187,7 @@ returns 404 as soon as `AUTH_MODE=clerk`. Real Clerk stays wired for real keys.
 | S→C | `track:changed` | `{ roomId, songId, changedBy }` | host changed the track |
 | S→C | `chat:message` | `{ message }` | broadcast to the room |
 | S→C | `presence` | `{ roomId, connectedUserIds }` | multi-tab aware |
+| S→C | `room:evicted` | `{ roomId, reason }` | sent to a member's sockets when they leave the room over REST |
 | S→C | `room:error` | `{ ok: false, error, roomId }` | rejection (authz, validation, rate limit) |
 
 ## Testing
@@ -187,12 +199,13 @@ npm test              # vitest: server (unit + REST integration + realtime socke
 npm run build         # tsc → server/dist, vite build → client/dist
 npm run e2e           # boots the built API + in-memory Mongo and walks the real HTTP + socket flow
 npm run latency       # 220 events per channel, prints p50/p95 propagation latency
+bash scripts/secret_scan.sh   # the scan CI runs: no tracked .env, no credential-shaped literal
 ```
 
 The server suite boots one real `mongod` (mongodb-memory-server, version pinned to 8.2.6) and gives each
 test file its own database. Socket tests connect two and three real `socket.io-client` instances and assert
-propagation, authz rejection, queue ordering, drift snapping, idempotency, resync after a forced disconnect
-and room isolation. Client tests cover the queue and room-sync reducers, the player/room/library stores
+propagation, authz rejection, queue ordering, drift snapping, idempotency, resync after a forced disconnect,
+room isolation, the payload-size bound and the per-channel rate limits. Client tests cover the queue and room-sync reducers, the player/room/library stores
 (with the socket layer mocked at the module boundary) and the player, track list, waveform and sign-in
 components.
 
@@ -205,15 +218,15 @@ verbatim into `VERIFY.md`.
 |---|---|
 | `npm run lint` | 0 errors, 0 warnings (server + client) |
 | `npm run typecheck` | 0 errors (`tsc` server build config, server test config, client) |
-| `npm run test` (server) | 15 files, 169 tests passed |
-| `npm run test` (client) | 11 files, 96 tests passed |
-| `npm run build` | server `tsc` clean; client 1787 modules → 479.87 kB JS (146.78 kB gzip) + 21.60 kB CSS |
-| `npm run e2e` | 20/20 steps PASS, wall clock 2.20 s |
-| `npm run latency` | see the propagation table in `VERIFY.md` |
-| `bash scripts/secret_scan.sh` | clean (and verified to catch an injected canary) |
+| `npm run test` (server) | 18 files, 209 tests passed |
+| `npm run test` (client) | 12 files, 102 tests passed |
+| `npm run build` | server `tsc` clean; client 1787 modules → 480.31 kB JS (146.94 kB gzip) + 21.63 kB CSS (5.08 kB gzip) |
+| `npm run e2e` | 22/22 steps PASS, wall clock 3.84 s |
+| `npm run latency` | loopback on one host: chat p50 9–12 ms / p95 13–24 ms over three runs (VERIFY.md §2) |
+| `bash scripts/secret_scan.sh` | clean, and each of the three checks is proven able to fail (VERIFY.md §1.7) |
 | Sample library | 8 synthesised tracks, 2.03 MB of MP3 (96 kbps mono, 44.1 kHz), 120-bucket peaks each |
 | Cold `mongod` download | 781 MB from fastdl.mongodb.org, 326 s (one-off, cached afterwards) |
-| Clean checkout | `git clone` → `npm ci` → all five gates green (VERIFY.md §1.8) |
+| Clean checkout | `git clone` → `npm ci` → all five gates + the secret scan green (VERIFY.md §1.8) |
 
 ## Limitations and what is not built yet
 
@@ -229,6 +242,10 @@ verbatim into `VERIFY.md`.
 - **The sample library is synthesised**, deliberately: eight short loops, not a music catalogue.
 - **Play events are counted, not timed.** `msPlayed` is stored but nothing measures real listening duration,
   so "plays" are play-starts.
+- **Hard payload ceilings.** A chat message is capped at 1 000 characters, and one socket payload at
+  `SOCKET_MAX_PAYLOAD_BYTES` (64 kB by default). A larger frame is refused by the transport with WebSocket
+  close 1009, which the client maps to a typed `PAYLOAD_TOO_LARGE` error instead of a silent disconnect —
+  but it is still a closed connection, not a partial accept.
 - **No push notifications** when a room you are in changes track while you are away.
 
 ## License

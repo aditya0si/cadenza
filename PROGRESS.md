@@ -45,3 +45,11 @@ Append-only. One dated line per milestone: what changed, what passed, what is bl
   (client suite now 11 files / 96 tests) and the room-store socket-wiring tests. The last full chain
   (lint → typecheck → test → build → e2e) is green: 0 lint problems, 0 type errors, 169 server + 96 client
   tests, build OK, e2e 20/20 steps in 2.20 s wall clock. Nothing is left running; all ports are free.
+- Milestone 9 — adversarial-review round (findings closed in `e5164cc` + `f72746d`): the secret scan is
+  green on a pristine clone without weakening it (every check runs, the exit code aggregates, secret-ish
+  names are matched case-insensitively in every tracked file, CI runs the same script instead of a copy);
+  production refuses to boot with `AUTH_MODE=demo` or a committed placeholder secret; room chat reads are
+  member-only on both transports; REST `leave` evicts the caller's sockets; idempotency is per member, not
+  per room; oversized bodies answer 413; demo tokens need an `exp` and are TTL-capped; `playback:report` is
+  bucketed and sockets have a payload bound with a typed refusal. Evidence and the disclosed test changes
+  are in VERIFY.md §1.7, §2, §4, §5 (items 9–16) and §6.1.

@@ -17,6 +17,15 @@ live deployment needs, and the env vars each one must be given.
    the quick start; tighten it to Render's egress IPs for anything real).
 2. Copy the SRV connection string → `MONGO_URI` (server only; never commit it).
 
+**Upgrading an existing database.** The chat idempotency index changed from `{roomId, eventId}` to
+`{roomId, authorId, eventId}` (per-member event ids). `ensureIndexes()` builds the new one at boot but does
+not drop the old one, so a database created before that change still carries the old unique constraint and
+would keep rejecting a second listener's event id. Drop it once:
+
+```js
+db.messages.dropIndex('roomId_1_eventId_1')   // mongosh
+```
+
 ## 2. API on Render
 
 - Root directory: repository root. Build command: `npm ci && npm run build --workspace server`.
@@ -37,10 +46,17 @@ live deployment needs, and the env vars each one must be given.
   | `CLERK_SECRET_KEY` | Clerk dashboard → API keys |
   | `CLERK_WEBHOOK_SECRET` | Clerk dashboard → Webhooks → signing secret |
   | `MEDIA_SIGNING_SECRET` | 32+ random bytes (`openssl rand -hex 32`) |
+  | `DEMO_AUTH_SECRET` | optional in production; if set, it must not be a placeholder |
   | `MEDIA_URL_TTL_SECONDS` | `300` |
   | `CORS_ORIGINS` | the Vercel URL, e.g. `https://cadenza.vercel.app` |
   | `ADMIN_EMAILS` | comma-separated list of admin accounts |
   | `LOG_LEVEL` | `info` |
+  | `SOCKET_MAX_PAYLOAD_BYTES` | optional; defaults to `65536` |
+  | `SOCKET_*_BURST` / `SOCKET_*_REFILL_PER_SEC` | optional; per-socket token buckets |
+
+- The API **refuses to start** if `NODE_ENV=production` is combined with `AUTH_MODE=demo`, or if
+  `MEDIA_SIGNING_SECRET` / `DEMO_AUTH_SECRET` still hold the placeholder committed in `.env.example`.
+  A misconfigured Render service fails its health check instead of serving demo-signed sessions.
 
 - WebSockets: Socket.IO uses the same port and the default `/socket.io` path; no
   extra Render configuration is required (sticky sessions are not needed because
