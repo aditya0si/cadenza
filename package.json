@@ -30,6 +30,7 @@
     "test:server": "npm run test --workspace server",
     "test:client": "npm run test --workspace client",
     "e2e": "node scripts/e2e_smoke.mjs",
+    "demo": "node scripts/demo_boot.mjs",
     "latency": "node scripts/latency_probe.mjs",
     "media:generate": "node tools/generate-media.mjs"
   },
