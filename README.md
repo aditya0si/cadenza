@@ -96,6 +96,9 @@ npm run seed --workspace server          # catalogue + demo users/playlists/room
 npm run dev                              # API on :4000, client on :5173
 ```
 
+**No mongod and no Docker?** `npm run build && npm run demo` boots an in-memory MongoDB, seeds it,
+starts the built API on :4000 and the built client on :4173 — see `VERIFY.md` §4.
+
 Environment variables (see `.env.example` for the annotated list):
 
 | Variable | Default | Purpose |
@@ -110,7 +113,8 @@ Environment variables (see `.env.example` for the annotated list):
 | `MEDIA_URL_TTL_SECONDS` | `300` | stream URL lifetime |
 | `CORS_ORIGINS` | `http://localhost:5173,http://localhost:4173` | strict allowlist for API + socket handshake |
 | `PLAYBACK_DRIFT_THRESHOLD_MS` | `750` | drift beyond this is snapped back |
-| `RATE_LIMIT_*` / `SOCKET_*_BURST` | see `.env.example` | HTTP and per-socket rate limits |
+| `RATE_LIMIT_*` | see `.env.example` | HTTP rate-limit buckets (auth/write/read) |
+| `SOCKET_CHAT_BURST`, `SOCKET_CHAT_REFILL_PER_SEC`, `SOCKET_QUEUE_BURST`, `SOCKET_QUEUE_REFILL_PER_SEC` | `10/2`, `30/5` | per-socket token buckets for chat and queue events |
 | `VITE_API_URL`, `VITE_SOCKET_URL`, `VITE_AUTH_MODE`, `VITE_CLERK_PUBLISHABLE_KEY` | local defaults | client build-time config |
 
 **Demo mode.** With no Clerk keys the app boots with `AUTH_MODE=demo` / `VITE_AUTH_MODE=demo`: the sign-in
@@ -188,7 +192,9 @@ npm run latency       # 220 events per channel, prints p50/p95 propagation laten
 The server suite boots one real `mongod` (mongodb-memory-server, version pinned to 8.2.6) and gives each
 test file its own database. Socket tests connect two and three real `socket.io-client` instances and assert
 propagation, authz rejection, queue ordering, drift snapping, idempotency, resync after a forced disconnect
-and room isolation.
+and room isolation. Client tests cover the queue and room-sync reducers, the player/room/library stores
+(with the socket layer mocked at the module boundary) and the player, track list, waveform and sign-in
+components.
 
 ## Measured results
 
@@ -200,9 +206,9 @@ verbatim into `VERIFY.md`.
 | `npm run lint` | 0 errors, 0 warnings (server + client) |
 | `npm run typecheck` | 0 errors (`tsc` server build config, server test config, client) |
 | `npm run test` (server) | 15 files, 169 tests passed |
-| `npm run test` (client) | 8 files, 70 tests passed |
+| `npm run test` (client) | 9 files, 80 tests passed |
 | `npm run build` | server `tsc` clean; client 1787 modules → 479.87 kB JS (146.78 kB gzip) + 21.60 kB CSS |
-| `npm run e2e` | 20/20 steps PASS, wall clock 2.16 s |
+| `npm run e2e` | 20/20 steps PASS, wall clock 2.74 s |
 | `npm run latency` | see the propagation table in `VERIFY.md` |
 | Sample library | 8 synthesised tracks, 2.03 MB of MP3 (96 kbps mono, 44.1 kHz), 120-bucket peaks each |
 | Cold `mongod` download | 781 MB from fastdl.mongodb.org, 326 s (one-off, cached afterwards) |

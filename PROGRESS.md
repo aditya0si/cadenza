@@ -10,3 +10,34 @@ Append-only. One dated line per milestone: what changed, what passed, what is bl
   driver (`PROBE_OK_MS=326545`, cold download included). No mirror/system-binary fallback needed.
 - npm 12 install-script blocking noted: `install-scripts approve` writes `allowScripts` into the root
   `package.json` (committed), so `esbuild` + `mongodb-memory-server` postinstalls are provisioned in CI too.
+- Milestone 1 — backend: layered Express/TS API (routes → controllers → services → repositories), 8 Mongoose
+  models with real indexes, zod validation on every endpoint, request-id + pino JSON logs, three rate-limit
+  buckets, helmet + strict CORS allowlist, Clerk identity verifier behind an injectable seam, Clerk webhook
+  sync via `verifyWebhook`, HMAC signed short-lived stream URLs with Range support, Socket.IO with a
+  server-authoritative playback clock, drift snapping, idempotent events and presence. `tsc --noEmit` and
+  eslint clean.
+- Milestone 2 — media: `tools/generate-media.mjs` synthesised 8 royalty-free tracks (2.03 MB of MP3 at
+  96 kbps mono, 44.1 kHz) plus gradient cover SVGs and 120-bucket waveform peaks; `ffprobe` confirms real
+  audio (22.0 s, mean −18.4 dB, max −1.6 dB) and the peaks are non-zero.
+- Milestone 3 — server tests: 15 files / 169 tests green (unit + REST integration + realtime sockets with two
+  and three real socket.io clients). Three product bugs found and fixed while getting them green: the room
+  host handover never updated `hostId`, `$text` search could run before its index was built, and the webhook
+  verifier only accepted `svix-*` header spellings.
+- Milestone 4 — client: React + Vite + Tailwind + shadcn-style primitives, Clerk/demo auth seam, Zustand
+  player/room/library stores with pure reducers, persistent `<audio>` player with keyboard shortcuts,
+  Discover/Album/Artist/Playlist/Search/Library/Rooms/Room/Admin pages, 8 test files / 70 tests green.
+  One product bug found by the client tests: `enqueueTracks` did not de-duplicate within a single batch.
+- Milestone 5 — first `npm run build && npm run e2e`: build PASS (server tsc + vite, 479.87 kB JS /
+  146.78 kB gzip); e2e FAILED on a real production-only bug — the compiled ESM server imported `models` as a
+  named export from the CommonJS mongoose package, which Node's ESM loader cannot resolve (`tsx`/vitest hid
+  it). Fixed by reading `mongoose.models` off the default export in all 8 model files.
+- Milestone 6 — full gate chain green in one session: lint 0/0, typecheck 0 errors, 169 server + 80 client
+  tests, build, e2e 20/20 steps. Eight product bugs were found by the gates themselves and fixed in product
+  code (see VERIFY.md §5): the ESM mongoose import, room `hostId` handover, `$text` index timing, the
+  webhook header spellings, the 416 error envelope, in-batch queue de-duplication, the volume slider's
+  accessible name, and the room store keeping a stale socket reference after leaving a room.
+- Milestone 7 — docs: README (architecture, API + socket tables, measured results, limitations),
+  VERIFY.md (every gate with pasted output, the disclosed test-file changes, an honest gap list),
+  docs/DEPLOY.md, `.github/workflows/ci.yml` running the same five gates on ubuntu-latest plus a manual
+  latency job, and `npm run demo` so the reviewer can boot the whole stack without mongod or Docker.
+  Latency probe: chat p50 17 ms / p95 29 ms, playback:seek p50 11 ms / p95 18 ms over 220 events each.

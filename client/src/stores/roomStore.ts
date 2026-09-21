@@ -109,6 +109,9 @@ export const useRoomStore = create<RoomStore>((set, get) => {
         void emitWithAck(socket, 'room:leave', { roomId }).catch(() => undefined);
       }
       detachListeners();
+      // Drop the reference too, so later mutations fall back to the REST paths
+      // instead of emitting over a socket that is no longer in the room.
+      socket = null;
       dispatch({ type: 'reset' });
     },
 
