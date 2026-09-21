@@ -3,6 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import dotenv from 'dotenv';
 import { z } from 'zod';
+import { MAX_DEMO_SESSION_TTL_SECONDS } from '../auth/demoToken.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 /** server/ */
@@ -33,7 +34,7 @@ const envSchema = z.object({
   CLERK_WEBHOOK_SECRET: z.string().default(''),
   /** Secret used to sign demo sessions; falls back to MEDIA_SIGNING_SECRET. */
   DEMO_AUTH_SECRET: z.string().default(''),
-  DEMO_SESSION_TTL_SECONDS: z.coerce.number().int().min(60).default(12 * 60 * 60),
+  DEMO_SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(MAX_DEMO_SESSION_TTL_SECONDS).default(12 * 60 * 60),
   ADMIN_EMAILS: z.string().default('admin@cadenza.dev'),
 
   MEDIA_DIR: z.string().default('./media'),
@@ -57,6 +58,14 @@ const envSchema = z.object({
   SOCKET_CHAT_REFILL_PER_SEC: z.coerce.number().min(0.1).default(2),
   SOCKET_QUEUE_BURST: z.coerce.number().int().min(1).default(30),
   SOCKET_QUEUE_REFILL_PER_SEC: z.coerce.number().min(0.1).default(5),
+  /** Drift reports (`playback:report`) are bucketed too — they are client-driven. */
+  SOCKET_REPORT_BURST: z.coerce.number().int().min(1).default(60),
+  SOCKET_REPORT_REFILL_PER_SEC: z.coerce.number().min(0.1).default(20),
+  /**
+   * Hard ceiling on a single socket payload (socket.io `maxHttpBufferSize`).
+   * Anything larger is refused by the transport instead of being buffered.
+   */
+  SOCKET_MAX_PAYLOAD_BYTES: z.coerce.number().int().min(1_024).max(1_000_000).default(65_536),
 });
 
 export type Env = z.infer<typeof envSchema> & {
@@ -70,6 +79,55 @@ export type Env = z.infer<typeof envSchema> & {
   serviceVersion: string;
 };
 
+/**
+ * Development placeholders that are *committed in this repository*, so they are
+ * public knowledge. Production refuses to boot while any secret still holds one
+ * of these — a deployment that kept one would be signing real traffic with a
+ * value anyone can read in the repo.
+ */
+export const COMMITTED_SECRET_DEFAULTS: readonly string[] = ['dev-only-media-signing-secret-change-me'];
+
+/**
+ * The signing secrets this API can hold. There is deliberately no `JWT_SECRET`:
+ * production session tokens are Clerk-issued and verified with Clerk's public
+ * keys, and demo sessions are HMAC-signed with `demoAuthSecret`.
+ */
+export const SECRET_ENV_VARS = ['MEDIA_SIGNING_SECRET', 'DEMO_AUTH_SECRET'] as const;
+
+type RawEnv = z.infer<typeof envSchema>;
+
+/**
+ * Production fail-closed rules. Each one exists because the alternative is a
+ * silently insecure deployment:
+ *   - `AUTH_MODE=demo` in production would accept locally-minted sessions from
+ *     anyone who knows the signing secret (which, by default, is committed).
+ *   - a committed placeholder secret is public, so "signing" with it verifies
+ *     nothing.
+ */
+function assertProductionSecrets(raw: RawEnv): void {
+  if (raw.NODE_ENV !== 'production') return;
+
+  if (raw.AUTH_MODE !== 'clerk') {
+    throw new Error(
+      'Refusing to boot with NODE_ENV=production and AUTH_MODE=demo: demo sessions are signed locally, so a production deployment would accept tokens minted from a development secret. Set AUTH_MODE=clerk (and CLERK_SECRET_KEY).',
+    );
+  }
+
+  const secrets: { name: string; value: string }[] = [
+    { name: 'MEDIA_SIGNING_SECRET', value: raw.MEDIA_SIGNING_SECRET },
+    // `demoAuthSecret` falls back to the media secret when DEMO_AUTH_SECRET is
+    // empty, so the effective value is what has to be a real secret.
+    { name: 'DEMO_AUTH_SECRET', value: raw.DEMO_AUTH_SECRET || raw.MEDIA_SIGNING_SECRET },
+  ];
+  const offenders = secrets.filter((secret) => COMMITTED_SECRET_DEFAULTS.includes(secret.value));
+  if (offenders.length > 0) {
+    const names = offenders.map((secret) => secret.name).join(', ');
+    throw new Error(
+      `Refusing to boot with NODE_ENV=production: ${names} still hold a development placeholder that is committed in this repository. Generate a real secret (e.g. \`openssl rand -hex 32\`) before deploying.`,
+    );
+  }
+}
+
 function resolveMediaDir(value: string): string {
   if (path.isAbsolute(value)) return value;
   return path.resolve(serverRoot, value);
@@ -82,6 +140,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error(`Invalid environment configuration — ${issues}`);
   }
   const raw = parsed.data;
+
+  assertProductionSecrets(raw);
 
   if (raw.AUTH_MODE === 'clerk' && raw.NODE_ENV === 'production' && !raw.CLERK_SECRET_KEY) {
     throw new Error('AUTH_MODE=clerk in production requires CLERK_SECRET_KEY');

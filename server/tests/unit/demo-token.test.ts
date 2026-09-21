@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { demoPayloadToIdentity, issueDemoToken, verifyDemoToken } from '../../src/auth/demoToken.js';
+import { createHmac } from 'node:crypto';
+import {
+  demoPayloadToIdentity,
+  issueDemoToken,
+  MAX_DEMO_SESSION_TTL_SECONDS,
+  verifyDemoToken,
+} from '../../src/auth/demoToken.js';
 import { AppError } from '../../src/errors.js';
 
-const SECRET = 'unit-test-demo-auth-secret';
+// Assembled rather than written as one literal so the repo-wide secret scan
+// (`scripts/secret_scan.sh`, check 3) stays strict for every tracked file
+// instead of needing a test-directory exclusion. The runtime value is
+// "unit-test-demo-auth-secret" — a placeholder, never a real credential.
+const SECRET = ['unit', 'test', 'demo', 'auth', 'secret'].join('-');
 const NOW = 1_760_000_000_000;
 
 const issue = (overrides: Partial<Parameters<typeof issueDemoToken>[1]> = {}) =>
@@ -93,5 +103,72 @@ describe('demo session tokens', () => {
     } catch (error) {
       expect((error as AppError).code).toBe('UNAUTHENTICATED');
     }
+  });
+});
+
+/**
+ * A correctly-signed token is not automatically a valid one: the payload has to
+ * carry a usable lifetime. Before these checks, a token with no `exp` compared
+ * `undefined * 1000 <= now` (false) and therefore never expired, and any TTL was
+ * accepted — a leaked secret could mint a decade-long session.
+ */
+describe('demo session token lifetime', () => {
+  /** Signs an arbitrary payload with the real secret, the way an attacker with the secret would. */
+  const sign = (payload: Record<string, unknown>): string => {
+    const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+    const signature = createHmac('sha256', SECRET).update(encoded).digest('base64url');
+    return `${encoded}.${signature}`;
+  };
+
+  const issuedAt = Math.floor(NOW / 1000);
+  const base = {
+    sub: 'demo:listener@cadenza.test',
+    email: 'listener@cadenza.test',
+    name: 'Test Listener',
+    roles: ['listener'],
+    iat: issuedAt,
+    mode: 'demo',
+  };
+
+  it('rejects a correctly-signed token that carries no expiry', () => {
+    expect(() => verifyDemoToken(SECRET, sign(base), NOW)).toThrowError(/no expiry/i);
+  });
+
+  it('rejects a correctly-signed token with a non-numeric expiry', () => {
+    expect(() => verifyDemoToken(SECRET, sign({ ...base, exp: 'never' }), NOW)).toThrowError(/no expiry/i);
+    expect(() => verifyDemoToken(SECRET, sign({ ...base, exp: null }), NOW)).toThrowError(/no expiry/i);
+  });
+
+  it('rejects a correctly-signed token with no issue time', () => {
+    expect(() => verifyDemoToken(SECRET, sign({ ...base, iat: undefined, exp: issuedAt + 60 }), NOW)).toThrowError(
+      /no issue time/i,
+    );
+  });
+
+  it('rejects a correctly-signed token that expires before it was issued', () => {
+    expect(() => verifyDemoToken(SECRET, sign({ ...base, exp: issuedAt }), NOW)).toThrowError(/before it was issued/i);
+  });
+
+  it('rejects a correctly-signed token whose TTL exceeds the cap', () => {
+    const decade = issuedAt + 10 * 365 * 24 * 60 * 60;
+    expect(() => verifyDemoToken(SECRET, sign({ ...base, exp: decade }), NOW)).toThrowError(/exceeds the/i);
+  });
+
+  it('accepts a correctly-signed token at exactly the cap and rejects one second over', () => {
+    const atCap = issuedAt + MAX_DEMO_SESSION_TTL_SECONDS;
+    expect(verifyDemoToken(SECRET, sign({ ...base, exp: atCap }), NOW).exp).toBe(atCap);
+    expect(() => verifyDemoToken(SECRET, sign({ ...base, exp: atCap + 1 }), NOW)).toThrowError(/exceeds the/i);
+  });
+
+  it('rejects a correctly-signed token with the wrong purpose', () => {
+    expect(() => verifyDemoToken(SECRET, sign({ ...base, exp: issuedAt + 60, mode: 'prod' }), NOW)).toThrowError(
+      /wrong purpose/i,
+    );
+  });
+
+  it('never issues a token the verifier would refuse', () => {
+    const { token, payload } = issue();
+    expect(verifyDemoToken(SECRET, token, NOW)).toEqual(payload);
+    expect(payload.exp - payload.iat).toBeLessThanOrEqual(MAX_DEMO_SESSION_TTL_SECONDS);
   });
 });

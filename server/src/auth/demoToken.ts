@@ -24,6 +24,13 @@ export interface DemoTokenPayload {
   mode: 'demo';
 }
 
+/**
+ * The longest lifetime the verifier will accept, whatever a token claims. The
+ * default session TTL is 12 hours; a token that outlives this is refused, so a
+ * leaked signing secret cannot mint a decade-long session.
+ */
+export const MAX_DEMO_SESSION_TTL_SECONDS = 24 * 60 * 60;
+
 const b64url = (input: Buffer | string): string => Buffer.from(input).toString('base64url');
 
 const sign = (secret: string, payload: string): string =>
@@ -66,6 +73,22 @@ export function verifyDemoToken(secret: string, token: string, now = Date.now())
   }
 
   if (payload.mode !== 'demo') throw AppError.unauthenticated('Demo session token has the wrong purpose');
+  // `exp` is mandatory: a correctly-signed token without one used to compare
+  // `undefined * 1000 <= now` (false), i.e. it never expired.
+  if (typeof payload.iat !== 'number' || !Number.isFinite(payload.iat)) {
+    throw AppError.unauthenticated('Demo session token has no issue time');
+  }
+  if (typeof payload.exp !== 'number' || !Number.isFinite(payload.exp)) {
+    throw AppError.unauthenticated('Demo session token has no expiry');
+  }
+  if (payload.exp <= payload.iat) {
+    throw AppError.unauthenticated('Demo session token expires before it was issued');
+  }
+  if (payload.exp - payload.iat > MAX_DEMO_SESSION_TTL_SECONDS) {
+    throw AppError.unauthenticated(
+      `Demo session token TTL exceeds the ${MAX_DEMO_SESSION_TTL_SECONDS} second maximum`,
+    );
+  }
   if (payload.exp * 1000 <= now) throw AppError.unauthenticated('Demo session token has expired');
   return payload;
 }

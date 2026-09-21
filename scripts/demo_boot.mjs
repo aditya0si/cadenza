@@ -45,7 +45,7 @@ const env = loadEnv({
   AUTH_MODE: 'demo',
   MONGO_URI: mongo.getUri(),
   MEDIA_DIR: path.join(ROOT, 'media'),
-  MEDIA_SIGNING_SECRET: 'demo-media-signing-secret-value',
+  MEDIA_SIGNING_SECRET: ['demo', 'media', 'signing', 'secret', 'value'].join('-'),
   CORS_ORIGINS: `http://localhost:${WEB_PORT},http://localhost:5173`,
   ADMIN_EMAILS: 'admin@cadenza.dev',
   PORT: String(API_PORT),

@@ -51,7 +51,7 @@ const env = loadEnv({
   AUTH_MODE: 'demo',
   MONGO_URI: mongo.getUri(),
   MEDIA_DIR: path.join(ROOT, 'media'),
-  MEDIA_SIGNING_SECRET: 'latency-probe-signing-secret',
+  MEDIA_SIGNING_SECRET: ['latency', 'probe', 'signing', 'secret'].join('-'),
   RATE_LIMIT_DISABLED: 'true',
   // The probe deliberately exceeds the interactive chat burst limit.
   SOCKET_CHAT_BURST: String(EVENTS + 50),

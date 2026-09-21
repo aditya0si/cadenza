@@ -50,10 +50,17 @@ export const createErrorHandler = (logger: Logger): ErrorRequestHandler => {
       message = 'Malformed identifier';
       details = null;
     } else if (isBodyParserError(error)) {
-      status = 400;
-      code = 'VALIDATION_ERROR';
-      message = 'Request body could not be parsed as JSON';
-      details = null;
+      if (bodyParserErrorType(error) === 'entity.too.large') {
+        status = 413;
+        code = 'PAYLOAD_TOO_LARGE';
+        message = 'Request body is larger than the 1 MB limit';
+        details = null;
+      } else {
+        status = 400;
+        code = 'VALIDATION_ERROR';
+        message = 'Request body could not be parsed as JSON';
+        details = null;
+      }
     }
 
     const logPayload = { requestId: requestIdValue, code, status, err: error instanceof Error ? error.message : String(error) };
@@ -79,8 +86,25 @@ const isMongoDuplicateKeyError = (error: unknown): boolean =>
 const isMongoCastError = (error: unknown): boolean =>
   typeof error === 'object' && error !== null && (error as { name?: string }).name === 'CastError';
 
-const isBodyParserError = (error: unknown): boolean =>
-  typeof error === 'object' &&
-  error !== null &&
-  typeof (error as { type?: string }).type === 'string' &&
-  (error as { type: string }).type.startsWith('entity.parse.failed');
+/**
+ * Every failure `body-parser` can raise carries a `type`. Matching only
+ * `entity.parse.failed` meant an oversized body (`entity.too.large`) fell through
+ * to the generic handler and answered 500 INTERNAL instead of 413.
+ */
+const BODY_PARSER_TYPES = new Set([
+  'entity.parse.failed',
+  'entity.too.large',
+  'entity.verify.failed',
+  'encoding.unsupported',
+  'charset.unsupported',
+  'request.aborted',
+  'request.size.invalid',
+]);
+
+const bodyParserErrorType = (error: unknown): string | null => {
+  if (typeof error !== 'object' || error === null) return null;
+  const type = (error as { type?: unknown }).type;
+  return typeof type === 'string' && BODY_PARSER_TYPES.has(type) ? type : null;
+};
+
+const isBodyParserError = (error: unknown): boolean => bodyParserErrorType(error) !== null;

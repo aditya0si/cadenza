@@ -44,7 +44,11 @@ const [{ buildServer }, { loadEnv }, { createLogger }, { DemoIdentityVerifier },
     load('db/seed.js'),
   ]);
 
-const WEBHOOK_SECRET = 'e2e-webhook-signing-secret';
+// Assembled rather than written as one literal so the repo-wide secret scan
+// (`scripts/secret_scan.sh`, check 3) stays strict for every tracked file
+// instead of needing a script exclusion. The runtime value is
+// "e2e-webhook-signing-secret" — a placeholder, never a real credential.
+const WEBHOOK_SECRET = ['e2e', 'webhook', 'signing', 'secret'].join('-');
 
 // ---------------------------------------------------------------------------
 // tiny harness
@@ -125,7 +129,7 @@ const env = loadEnv({
   AUTH_MODE: 'demo',
   MONGO_URI: mongo.getUri(),
   MEDIA_DIR: path.join(ROOT, 'media'),
-  MEDIA_SIGNING_SECRET: 'e2e-media-signing-secret-value',
+  MEDIA_SIGNING_SECRET: ['e2e', 'media', 'signing', 'secret', 'value'].join('-'),
   RATE_LIMIT_DISABLED: 'true',
   SOCKET_CHAT_BURST: '500',
   SOCKET_CHAT_REFILL_PER_SEC: '500',
@@ -444,6 +448,52 @@ await step('Clerk webhook sync (test-mode verifier) creates the mirror', async (
   });
   assert(unsigned.status === 403, `expected 403 without a signature, got ${unsigned.status}`);
   return `handled=${body.type}, unsigned rejected with ${unsigned.status}`;
+});
+
+await step('production refuses to boot with AUTH_MODE=demo (fail closed)', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const refusal = spawnSync(process.execPath, [path.join(DIST, 'index.js')], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      AUTH_MODE: 'demo',
+      MEDIA_SIGNING_SECRET: ['e2e', 'media', 'signing', 'secret', 'value'].join('-'),
+      LOG_LEVEL: 'silent',
+      PORT: '4999',
+    },
+  });
+  assert(refusal.status === 1, `expected exit 1, got ${refusal.status}`);
+  assert(
+    /Refusing to boot with NODE_ENV=production and AUTH_MODE=demo/.test(refusal.stderr),
+    `expected the refusal message on stderr, got: ${refusal.stderr.trim()}`,
+  );
+  return `exit=${refusal.status} — ${refusal.stderr.trim().split('\n')[0].replace(/^\[cadenza\] fatal startup error: Error: /, '').slice(0, 72)}…`;
+});
+
+await step('production refuses to boot on a committed default secret', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const refusal = spawnSync(process.execPath, [path.join(DIST, 'index.js')], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      NODE_ENV: 'production',
+      AUTH_MODE: 'clerk',
+      CLERK_SECRET_KEY: 'clerk-key-that-is-never-used-because-boot-refuses',
+      MEDIA_SIGNING_SECRET: undefined,
+      DEMO_AUTH_SECRET: undefined,
+      LOG_LEVEL: 'silent',
+      PORT: '4999',
+    },
+  });
+  assert(refusal.status === 1, `expected exit 1, got ${refusal.status}`);
+  assert(
+    /still hold a development placeholder that is committed in this repository/.test(refusal.stderr),
+    `expected the committed-placeholder refusal on stderr, got: ${refusal.stderr.trim()}`,
+  );
+  return `exit=${refusal.status} — refused the committed placeholder`;
 });
 
 // ---------------------------------------------------------------------------

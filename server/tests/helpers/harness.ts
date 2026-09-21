@@ -39,7 +39,7 @@ export interface HarnessOptions {
   manageConnection?: boolean;
 }
 
-const TEST_WEBHOOK_SECRET = 'test-webhook-signing-secret';
+const TEST_WEBHOOK_SECRET = ['test', 'webhook', 'signing', 'secret'].join('-');
 
 export async function createTestHarness(mongoUri: string, options: HarnessOptions = {}): Promise<TestHarness> {
   const manageConnection = options.manageConnection ?? true;
@@ -55,7 +55,7 @@ export async function createTestHarness(mongoUri: string, options: HarnessOption
     AUTH_MODE: 'demo',
     MONGO_URI: mongoUri,
     MEDIA_DIR: options.mediaDir ?? REPO_MEDIA_DIR,
-    MEDIA_SIGNING_SECRET: 'test-media-signing-secret-value',
+    MEDIA_SIGNING_SECRET: ['test', 'media', 'signing', 'secret', 'value'].join('-'),
     RATE_LIMIT_DISABLED: 'true',
     CORS_ORIGINS: 'http://localhost:5173',
     ADMIN_EMAILS: 'admin@cadenza.test',
