@@ -80,7 +80,7 @@ describe('SearchPage', () => {
     const user = userEvent.setup();
     vi.mocked(api.search).mockResolvedValue(results('orbit'));
     renderPage();
-    await user.type(screen.getByLabelText('Search the catalogue'), 'orbit', { delay: 10 });
+    await user.type(screen.getByLabelText('Search the catalogue'), 'orbit');
     await waitFor(() => expect(api.search).toHaveBeenCalled());
     expect(api.search).toHaveBeenCalledTimes(1);
     expect(api.search).toHaveBeenCalledWith('orbit');

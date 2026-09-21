@@ -206,9 +206,9 @@ verbatim into `VERIFY.md`.
 | `npm run lint` | 0 errors, 0 warnings (server + client) |
 | `npm run typecheck` | 0 errors (`tsc` server build config, server test config, client) |
 | `npm run test` (server) | 15 files, 169 tests passed |
-| `npm run test` (client) | 9 files, 80 tests passed |
+| `npm run test` (client) | 11 files, 96 tests passed |
 | `npm run build` | server `tsc` clean; client 1787 modules → 479.87 kB JS (146.78 kB gzip) + 21.60 kB CSS |
-| `npm run e2e` | 20/20 steps PASS, wall clock 2.74 s |
+| `npm run e2e` | 20/20 steps PASS, wall clock 2.20 s |
 | `npm run latency` | see the propagation table in `VERIFY.md` |
 | Sample library | 8 synthesised tracks, 2.03 MB of MP3 (96 kbps mono, 44.1 kHz), 120-bucket peaks each |
 | Cold `mongod` download | 781 MB from fastdl.mongodb.org, 326 s (one-off, cached afterwards) |

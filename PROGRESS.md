@@ -41,3 +41,7 @@ Append-only. One dated line per milestone: what changed, what passed, what is bl
   docs/DEPLOY.md, `.github/workflows/ci.yml` running the same five gates on ubuntu-latest plus a manual
   latency job, and `npm run demo` so the reviewer can boot the whole stack without mongod or Docker.
   Latency probe: chat p50 17 ms / p95 29 ms, playback:seek p50 11 ms / p95 18 ms over 220 events each.
+- Milestone 8 — coverage top-up + final gate run: added `SearchPage` and `RoomPage` component tests
+  (client suite now 11 files / 96 tests) and the room-store socket-wiring tests. The last full chain
+  (lint → typecheck → test → build → e2e) is green: 0 lint problems, 0 type errors, 169 server + 96 client
+  tests, build OK, e2e 20/20 steps in 2.20 s wall clock. Nothing is left running; all ports are free.
