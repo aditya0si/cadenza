@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# env / secrets
+.env
+.env.*
+!.env.example
+
+# tests / coverage
+coverage/
+.vitest/
+test-results/
+
+# logs
+*.log
+npm-debug.log*
+
+# python (media tooling scratch)
+.venv/
+__pycache__/
+
+# os / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

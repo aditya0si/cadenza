@@ -1,0 +1,25 @@
+# Local MongoDB for CADENZA development.
+# NOT required for the test suite or the e2e smoke script: those boot
+# mongodb-memory-server (a real mongod binary on an ephemeral port).
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#   MONGO_URI=mongodb://127.0.0.1:27017/cadenza npm run dev:server
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: cadenza-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: cadenza
+    volumes:
+      - cadenza-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  cadenza-mongo-data:
