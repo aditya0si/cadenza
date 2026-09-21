@@ -29,7 +29,7 @@ which writes `allowScripts` into the **root** `package.json` (committed, so CI h
 real — the log shows `Mongodb-Memory-Server* found binary: "C:\Users\oliad\.cache\mongodb-binaries\mongod-x64-win32-8.2.6.exe"`
 and both esbuild postinstalls. `npm install-scripts ls` → "No packages with unreviewed install scripts."
 
-## 1. Gates (in the order RULES.md §3 requires)
+## 1. Gates (in the order the build contract requires)
 
 All five were run back-to-back in one shell session; the exit codes are the observed ones.
 
