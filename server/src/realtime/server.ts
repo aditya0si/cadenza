@@ -120,8 +120,8 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
 
   const presence = new PresenceRegistry();
   const playbackDedupe = new EventDeduplicator(200);
-  const chatBucket = new TokenBucket(10, 2);
-  const queueBucket = new TokenBucket(30, 5);
+  const chatBucket = new TokenBucket(ctx.env.SOCKET_CHAT_BURST, ctx.env.SOCKET_CHAT_REFILL_PER_SEC);
+  const queueBucket = new TokenBucket(ctx.env.SOCKET_QUEUE_BURST, ctx.env.SOCKET_QUEUE_REFILL_PER_SEC);
 
   const emitPresence = (roomId: string): void => {
     io.to(roomId).emit('presence', { roomId, connectedUserIds: presence.connectedUserIds(roomId) });

@@ -5,6 +5,13 @@ import type { VerifiedWebhookEvent, WebhookVerifier } from './types.js';
 
 export const TEST_WEBHOOK_SIGNATURE_HEADER = 'x-cadenza-signature';
 
+/** Standard Webhooks header → the Svix-era alias Clerk's SDK reads. */
+export const STANDARD_WEBHOOK_HEADER_ALIASES: Record<string, string> = {
+  'webhook-id': 'svix-id',
+  'webhook-timestamp': 'svix-timestamp',
+  'webhook-signature': 'svix-signature',
+};
+
 /** Reads the exact bytes the client signed (captured by the JSON body parser). */
 const rawBodyOf = (request: ExpressRequest): Buffer => {
   if (request.rawBody) return request.rawBody;
@@ -20,9 +27,15 @@ const headerValue = (request: ExpressRequest, name: string): string | undefined 
 
 /**
  * Production webhook path: Clerk's own `verifyWebhook` from `@clerk/express`,
- * which validates the Standard Webhooks (svix) signature headers. The Express
- * request is forwarded with its raw body so the signature is checked over the
- * original bytes.
+ * which validates the Standard Webhooks signature. The Express request is
+ * forwarded with its raw body so the signature is checked over the original
+ * bytes.
+ *
+ * Standard Webhooks names its headers `webhook-id` / `webhook-timestamp` /
+ * `webhook-signature`; Clerk's SDK implementation only reads the Svix-era
+ * aliases (`svix-*`). Both spellings are therefore accepted here by copying a
+ * standard header onto its Svix alias when the alias is absent — the signature
+ * itself is still verified by Clerk's own code, never by ours.
  */
 export class ClerkWebhookVerifier implements WebhookVerifier {
   readonly mode = 'clerk' as const;
@@ -33,9 +46,16 @@ export class ClerkWebhookVerifier implements WebhookVerifier {
     const { verifyWebhook } = await import('@clerk/express/webhooks');
     const raw = rawBodyOf(request);
 
+    const headers: Record<string, string | string[] | undefined> = { ...request.headers };
+    for (const [standard, svix] of Object.entries(STANDARD_WEBHOOK_HEADER_ALIASES)) {
+      if (headers[svix] === undefined && headers[standard] !== undefined) {
+        headers[svix] = headers[standard];
+      }
+    }
+
     // Clerk's express helper reads `req.body`; hand it the exact raw bytes.
     const clerkRequest = {
-      headers: request.headers,
+      headers,
       method: request.method,
       url: request.url,
       originalUrl: request.originalUrl,

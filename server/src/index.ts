@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import type { Logger } from 'pino';
 import { loadEnv, type Env } from './config/env.js';
 import { createLogger } from './config/logger.js';
-import { connectMongo, disconnectMongo } from './db/connect.js';
+import { connectMongo, disconnectMongo, ensureIndexes } from './db/connect.js';
 import { createAppContext, type AppContext } from './context.js';
 import { createApp } from './http/app.js';
 import { createRealtimeServer, type RealtimeServer } from './realtime/server.js';
@@ -43,6 +43,7 @@ export async function buildServer(options: BuildServerOptions = {}): Promise<Run
 
   if (options.connectDatabase !== false) {
     await connectMongo(env.MONGO_URI);
+    await ensureIndexes();
   }
 
   const ctx = createAppContext({

@@ -65,6 +65,9 @@ export const createErrorHandler = (logger: Logger): ErrorRequestHandler => {
       return;
     }
     const body: ErrorBody = { error: { code, message, details, requestId: requestIdValue } };
+    // Some failures happen after a handler already set a content type (e.g. a
+    // 416 while streaming audio): the envelope must still be JSON.
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
     res.status(status).json(body);
   };
   return handler;

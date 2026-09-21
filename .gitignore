@@ -1,31 +1,16 @@
-# dependencies
 node_modules/
-
-# build output
 dist/
 build/
-*.tsbuildinfo
-
-# env / secrets
+coverage/
 .env
 .env.*
 !.env.example
-
-# tests / coverage
-coverage/
-.vitest/
-test-results/
-
-# logs
 *.log
-npm-debug.log*
-
-# python (media tooling scratch)
-.venv/
 __pycache__/
-
-# os / editor
+.venv/
+.vitest/
+*.tsbuildinfo
 .DS_Store
-Thumbs.db
-.idea/
-.vscode/
+media/tmp/
+# internal build brief — kept on disk for the reviewer, not part of the published repo
+SPEC.md

@@ -17,16 +17,19 @@ export interface MediaFileSlice {
  *   - bogus Range   → 416 + `Content-Range: bytes * /<size>`
  */
 export function sendMediaFile(req: Request, res: Response, file: MediaFileSlice): void {
+  const range = parseRangeHeader(req.headers.range, file.size);
+  if (range === 'unsatisfiable') {
+    // Reject before any media headers are set so the error handler can still
+    // answer with a JSON envelope.
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Content-Range', `bytes */${file.size}`);
+    throw new AppError('INVALID_RANGE', `Requested range cannot be satisfied for a ${file.size} byte file`);
+  }
+
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', file.contentType);
   // Signed URLs are short-lived and per-user: never let a shared cache keep them.
   res.setHeader('Cache-Control', 'private, no-store');
-
-  const range = parseRangeHeader(req.headers.range, file.size);
-  if (range === 'unsatisfiable') {
-    res.setHeader('Content-Range', `bytes */${file.size}`);
-    throw new AppError('INVALID_RANGE', `Requested range cannot be satisfied for a ${file.size} byte file`);
-  }
 
   if (range === null) {
     res.setHeader('Content-Length', file.size);

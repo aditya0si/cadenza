@@ -50,4 +50,17 @@ export default tseslint.config(
       globals: { ...globals.node },
     },
   },
+  {
+    // These modules intentionally export a hook/helper next to their components
+    // (the provider, the hook+helper pair, and the button variants). Fast-refresh
+    // purity is a dev-server nicety; splitting them would only add indirection.
+    files: [
+      'src/auth/AuthProvider.tsx',
+      'src/components/Waveform.tsx',
+      'src/components/ui/button.tsx',
+    ],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 );

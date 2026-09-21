@@ -51,6 +51,12 @@ const envSchema = z.object({
   RATE_LIMIT_AUTH_MAX: z.coerce.number().int().min(1).default(20),
   RATE_LIMIT_WRITE_MAX: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_READ_MAX: z.coerce.number().int().min(1).default(600),
+
+  /** Per-socket token buckets: burst size and refill rate for chat and queue events. */
+  SOCKET_CHAT_BURST: z.coerce.number().int().min(1).default(10),
+  SOCKET_CHAT_REFILL_PER_SEC: z.coerce.number().min(0.1).default(2),
+  SOCKET_QUEUE_BURST: z.coerce.number().int().min(1).default(30),
+  SOCKET_QUEUE_REFILL_PER_SEC: z.coerce.number().min(0.1).default(5),
 });
 
 export type Env = z.infer<typeof envSchema> & {

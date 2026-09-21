@@ -222,13 +222,14 @@ export class RoomService {
 
     let promoted: string | null = null;
     if (remaining.length > 0 && String(room.hostId) === requester.id) {
-      // Host left: the longest-standing remaining member takes over.
+      // Host left: the longest-standing remaining member takes over, and the
+      // room document's hostId moves with them.
       const next = remaining
         .slice()
         .sort((a, b) => new Date(a.joinedAt).getTime() - new Date(b.joinedAt).getTime())[0];
       if (next) {
         promoted = String(next.userId);
-        await roomRepository.addMember(roomId, next.userId as Types.ObjectId, 'host');
+        await roomRepository.transferHost(roomId, next.userId as Types.ObjectId);
       }
     }
     const snapshot = await this.snapshot(roomId, requester);

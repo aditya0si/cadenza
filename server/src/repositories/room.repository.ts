@@ -91,6 +91,18 @@ export const roomRepository = {
   },
 
   /**
+   * Hands the room over: the new host is written to `hostId` and their member row
+   * is upgraded in the same atomic update.
+   */
+  async transferHost(id: string | Types.ObjectId, userId: Types.ObjectId): Promise<RoomLean | null> {
+    return Room.findByIdAndUpdate(
+      id,
+      { $set: { hostId: userId, 'members.$[member].role': 'host', lastActivityAt: new Date() } },
+      { new: true, arrayFilters: [{ 'member.userId': userId }] },
+    ).lean<RoomLean>();
+  },
+
+  /**
    * Atomically claims a client event id. Returns null when the id was already
    * processed — the primitive behind "a duplicate queue:add never duplicates a
    * track". The stored ring buffer is capped at 200 ids per room.
