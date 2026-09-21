@@ -360,6 +360,18 @@ The full root chain was then run once more on the same tree: `bash scripts/secre
 `npm run lint` → 0, `npm run typecheck` → 0, `npm test` → 0 (209 + 102), `npm run build` → 0,
 `npm run e2e` → 0 (22/22).
 
+After the documentation was pasted, the server suite was run a fourth time on the final tree — the scan is
+the only gate that reads Markdown, and `server/tests/unit/secret-scan.test.ts` re-runs it against the
+working tree on every run — and it was green again:
+
+```
+ Test Files  18 passed (18)
+      Tests  209 passed (209)
+FINAL_RUN_EXIT=0
+```
+
+No retries, no `--retry`, no deselection, no `continue-on-error` anywhere in the chain.
+
 ## 4. Frontend boot for the live browser check
 
 **Exact command:** `npm run build && npm run demo`  (root)
