@@ -59,13 +59,22 @@ jobs:
 
       - name: Secret scan over the tracked tree
         run: |
-          matches=$(git grep -nIE '(api[_-]?key|secret|password|token|mongodb\+srv)\s*[:=]' -- . \
-            ':!*.example' ':!package-lock.json' ':!*.md' || true)
-          echo "$matches"
-          if echo "$matches" | grep -vE 'MEDIA_SIGNING_SECRET|CLERK_SECRET_KEY|CLERK_WEBHOOK_SECRET|DEMO_AUTH_SECRET|secretKey|signingSecret|secret: null|TEST_WEBHOOK|WEBHOOK_SECRET|SECRET =|SECRET:|redact|tokens?\b|seed-|windowMs' | grep -q .; then
-            echo "::error::Possible committed secret found by git grep"
-            exit 1
+          set -e
+          echo "1. no tracked .env files (only .env.example):"
+          git ls-files | grep -E '(^|/)\.env($|\.)' | grep -v '\.example$' && {
+            echo "::error::a real .env file is tracked"; exit 1; } || echo "   ok"
+
+          echo "2. no provider-shaped credentials:"
+          if git grep -nIE 'sk_(test|live)_[A-Za-z0-9]{8,}|pk_(test|live)_[A-Za-z0-9]{8,}|AKIA[0-9A-Z]{16}|mongodb\+srv://[^ ]+@|-----BEGIN [A-Z ]*PRIVATE KEY-----' -- . ':!package-lock.json'; then
+            echo "::error::a provider-shaped credential is committed"; exit 1
           fi
+          echo "   ok"
+
+          echo "3. no hardcoded literal values behind secret-ish names:"
+          if git grep -nIE "(api[_-]?key|secret|password|token)[\"']?[[:space:]]*[:=][[:space:]]*[\"'][A-Za-z0-9+/=_-]{20,}[\"']" -- . ':!package-lock.json' ':!*.example' ':!*.md'; then
+            echo "::error::a hardcoded literal secret is committed"; exit 1
+          fi
+          echo "   ok"
           echo "secret scan clean"
 
   # The latency probe is a measurement, not a pass/fail gate, so it lives behind

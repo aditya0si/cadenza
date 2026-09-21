@@ -210,8 +210,10 @@ verbatim into `VERIFY.md`.
 | `npm run build` | server `tsc` clean; client 1787 modules → 479.87 kB JS (146.78 kB gzip) + 21.60 kB CSS |
 | `npm run e2e` | 20/20 steps PASS, wall clock 2.20 s |
 | `npm run latency` | see the propagation table in `VERIFY.md` |
+| `bash scripts/secret_scan.sh` | clean (and verified to catch an injected canary) |
 | Sample library | 8 synthesised tracks, 2.03 MB of MP3 (96 kbps mono, 44.1 kHz), 120-bucket peaks each |
 | Cold `mongod` download | 781 MB from fastdl.mongodb.org, 326 s (one-off, cached afterwards) |
+| Clean checkout | `git clone` → `npm ci` → all five gates green (VERIFY.md §1.8) |
 
 ## Limitations and what is not built yet
 

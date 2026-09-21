@@ -209,6 +209,59 @@ ffmpeg -i media/tracks/midnight-circuit.mp3 -af volumedetect -f null -
 25 files / 2.19 MB in `media/` (8 MP3 + 8 SVG covers + 8 peak files + `MANIFEST.json`), all
 committed, all synthesised in-repo — no downloaded or copyrighted audio.
 
+### 1.7 secret scan — `bash scripts/secret_scan.sh` → **clean, and provably not vacuous**
+
+The same script CI runs (kept in the repo so it can be reproduced locally). Three checks: no tracked
+`.env` file (only `.env.example`), no provider-shaped credential (`sk_live_…`, `pk_test_…`, `AKIA…`,
+`mongodb+srv://…@`, PEM private keys), and no 20+ character string literal assigned to a secret-ish name.
+
+```
+1. no tracked .env files (only .env.example):
+   ok
+2. no provider-shaped credentials:
+   ok
+3. no hardcoded literal values behind secret-ish names:
+   ok
+secret scan clean
+SCAN_EXIT=0
+```
+
+**Detection proof** — a canary file containing a Stripe-shaped key was added to the index, scanned, then
+removed (so the gate is not vacuously green):
+
+```
+2. no provider-shaped credentials:
+canary-secret.ts:1:const stripe = { apiKey: *** };
+::error::a provider-shaped credential is committed
+SCAN_EXIT_WITH_CANARY=1
+SCAN_EXIT_AFTER_REMOVE=0
+```
+
+### 1.8 clean-checkout reproduction — `git clone` → `npm ci` → every gate
+
+The strongest check the reviewer can repeat: clone the committed tree somewhere else, install from the
+lockfile, and run the same five gates. Run verbatim in `$LOCALAPPDATA/Temp/cadenza-clean`:
+
+```bash
+git clone C:/Users/oliad/Desktop/portfolio-3pack/02-cadenza cadenza-clean
+cd cadenza-clean
+npm ci --no-audit --no-fund
+npm install-scripts ls      # -> "No packages with unreviewed install scripts."
+npm run lint && npm run typecheck && npm test && npm run build && npm run e2e
+```
+
+```
+CI_EXIT=0
+LINT_EXIT=0
+TYPECHECK_EXIT=0
+TEST_EXIT=0        (15 server files / 169 tests + 11 client files / 96 tests)
+BUILD_EXIT=0
+E2E_EXIT=0         (steps: 20   PASS: 20   FAIL: 0)
+```
+
+`npm ci` honoured the committed `allowScripts` entry, so the `esbuild` and `mongodb-memory-server`
+postinstalls ran on a fresh tree without any manual approval step.
+
 ## 4. Frontend boot for the live browser check
 
 **Exact command:** `npm run build && npm run demo`  (root)
