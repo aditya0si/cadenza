@@ -1,4 +1,4 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import mongoose, { Schema, model, type InferSchemaType, type Model } from 'mongoose';
 
 /** One row per (song, listener, session) — the raw material for /api/stats/*. */
 const playEventSchema = new Schema(
@@ -22,4 +22,4 @@ export type PlayEventDocument = InferSchemaType<typeof playEventSchema>;
 export type PlayEventModel = Model<PlayEventDocument>;
 
 export const PlayEvent: PlayEventModel =
-  (models.PlayEvent as PlayEventModel | undefined) ?? model<PlayEventDocument>('PlayEvent', playEventSchema);
+  (mongoose.models.PlayEvent as PlayEventModel | undefined) ?? model<PlayEventDocument>('PlayEvent', playEventSchema);

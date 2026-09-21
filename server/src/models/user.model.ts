@@ -1,4 +1,4 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import mongoose, { Schema, model, type InferSchemaType, type Model } from 'mongoose';
 
 /** A person who signs in through Clerk (or a demo session) and owns playlists/rooms. */
 const userSchema = new Schema(
@@ -23,4 +23,7 @@ userSchema.index({ roles: 1 });
 export type UserDocument = InferSchemaType<typeof userSchema>;
 export type UserModel = Model<UserDocument>;
 
-export const User: UserModel = (models.User as UserModel | undefined) ?? model<UserDocument>('User', userSchema);
+// `mongoose.models` is read off the default export on purpose: Node's ESM loader
+// cannot see it as a named export of this CommonJS package, and the guard keeps
+// model registration idempotent across re-imports (tsx watch, tests).
+export const User: UserModel = (mongoose.models.User as UserModel | undefined) ?? model<UserDocument>('User', userSchema);

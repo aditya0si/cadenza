@@ -1,4 +1,4 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import mongoose, { Schema, model, type InferSchemaType, type Model } from 'mongoose';
 
 const songSchema = new Schema(
   {
@@ -31,4 +31,4 @@ songSchema.index(
 export type SongDocument = InferSchemaType<typeof songSchema>;
 export type SongModel = Model<SongDocument>;
 
-export const Song: SongModel = (models.Song as SongModel | undefined) ?? model<SongDocument>('Song', songSchema);
+export const Song: SongModel = (mongoose.models.Song as SongModel | undefined) ?? model<SongDocument>('Song', songSchema);

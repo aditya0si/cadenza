@@ -1,4 +1,4 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import mongoose, { Schema, model, type InferSchemaType, type Model } from 'mongoose';
 
 const artistSchema = new Schema(
   {
@@ -21,4 +21,4 @@ artistSchema.index({ name: 'text', bio: 'text', genres: 'text' }, { weights: { n
 export type ArtistDocument = InferSchemaType<typeof artistSchema>;
 export type ArtistModel = Model<ArtistDocument>;
 
-export const Artist: ArtistModel = (models.Artist as ArtistModel | undefined) ?? model<ArtistDocument>('Artist', artistSchema);
+export const Artist: ArtistModel = (mongoose.models.Artist as ArtistModel | undefined) ?? model<ArtistDocument>('Artist', artistSchema);

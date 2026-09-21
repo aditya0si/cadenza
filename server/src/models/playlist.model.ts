@@ -1,4 +1,4 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import mongoose, { Schema, model, type InferSchemaType, type Model } from 'mongoose';
 
 const playlistEntrySchema = new Schema(
   {
@@ -29,4 +29,4 @@ export type PlaylistDocument = InferSchemaType<typeof playlistSchema>;
 export type PlaylistModel = Model<PlaylistDocument>;
 
 export const Playlist: PlaylistModel =
-  (models.Playlist as PlaylistModel | undefined) ?? model<PlaylistDocument>('Playlist', playlistSchema);
+  (mongoose.models.Playlist as PlaylistModel | undefined) ?? model<PlaylistDocument>('Playlist', playlistSchema);

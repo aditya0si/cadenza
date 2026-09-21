@@ -1,6 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { inject } from 'vitest';
-import type { Socket } from 'socket.io-client';
 import { awaitEvent, closeSockets, createTestHarness, emitWithAck, type TestHarness } from '../helpers/harness.js';
 import { seedCatalog, uniqueEventId, type SeededCatalog } from '../helpers/factory.js';
 import { roomRepository } from '../../src/repositories/room.repository.js';

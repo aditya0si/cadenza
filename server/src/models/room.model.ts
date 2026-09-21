@@ -1,4 +1,4 @@
-import { Schema, model, models, type InferSchemaType, type Model } from 'mongoose';
+import mongoose, { Schema, model, type InferSchemaType, type Model } from 'mongoose';
 
 const memberSchema = new Schema(
   {
@@ -55,4 +55,4 @@ roomSchema.index({ 'members.userId': 1 });
 export type RoomDocument = InferSchemaType<typeof roomSchema>;
 export type RoomModel = Model<RoomDocument>;
 
-export const Room: RoomModel = (models.Room as RoomModel | undefined) ?? model<RoomDocument>('Room', roomSchema);
+export const Room: RoomModel = (mongoose.models.Room as RoomModel | undefined) ?? model<RoomDocument>('Room', roomSchema);
