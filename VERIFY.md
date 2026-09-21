@@ -123,32 +123,34 @@ flow. Verbatim output:
 CADENZA e2e smoke test
 ======================
 
-[e2e] mongod 8.2.6 + API on http://127.0.0.1:63003 in 848 ms
+[e2e] mongod 8.2.6 + API on http://127.0.0.1:62509 in 811 ms
 
-  PASS  seed the generated media library                 214 ms  4 artists / 4 albums / 8 songs / 333 plays
-  PASS  GET /api/health reports the running service       32 ms  authMode=demo realtime=true
-  PASS  POST /api/auth/demo-session issues two listeners    54 ms  host=7b7e7e guest=7b7e81
+  PASS  seed the generated media library                 180 ms  4 artists / 4 albums / 8 songs / 333 plays
+  PASS  GET /api/health reports the running service       24 ms  authMode=demo realtime=true
+  PASS  POST /api/auth/demo-session issues two listeners    49 ms  host=fdc02c guest=fdc02f
   PASS  GET /api/songs browses the seeded catalogue       20 ms  8 songs, first="Aurora Drift"
   PASS  GET /api/search ranks full-text hits              14 ms  songs=1 artists=0
-  PASS  GET /api/songs/:id/stream-url + Range read of real audio    49 ms  206 slice=100B, full=282 KB, ttl=300s
-  PASS  POST /api/rooms creates a room and the guest joins    55 ms  room=7b7e92 members=2
-  PASS  socket handshake rejects an unauthenticated client    26 ms  rejected with UNAUTHENTICATED
-  PASS  both listeners join the room over sockets         40 ms  members=2 queue=0
-  PASS  guest queues a track and the host receives it     19 ms  queue=1 track="Glass Harbor"
-  PASS  replayed queue:add is idempotent                  25 ms  duplicate=true queue=2
-  PASS  host changes track, play/pause/seek propagate     27 ms  track ok, paused at 4004 ms
-  PASS  non-host cannot change the track                   3 ms  rejected with FORBIDDEN
+  PASS  GET /api/songs/:id/stream-url + Range read of real audio    57 ms  206 slice=100B, full=282 KB, ttl=300s
+  PASS  POST /api/rooms creates a room and the guest joins    40 ms  room=fdc040 members=2
+  PASS  socket handshake rejects an unauthenticated client    16 ms  rejected with UNAUTHENTICATED
+  PASS  both listeners join the room over sockets         33 ms  members=2 queue=0
+  PASS  guest queues a track and the host receives it     12 ms  queue=1 track="Glass Harbor"
+  PASS  replayed queue:add is idempotent                  22 ms  duplicate=true queue=2
+  PASS  host changes track, play/pause/seek propagate     20 ms  track ok, paused at 4003 ms
+  PASS  non-host cannot change the track                   2 ms  rejected with FORBIDDEN
   PASS  drift report snaps a lagging client back           7 ms  drift=87996 ms → snapped to 2004 ms
-  PASS  chat broadcasts to the room                        8 ms  author=E2E Guest
-  PASS  forced disconnect then resync restores full state   172 ms  queue=2 playing=true pos=2000 ms
-  PASS  GET /api/rooms/:id/messages returns the chat history    28 ms  1 messages
-  PASS  playlist create → add track → reorder             95 ms  tracks=2 durationMs=46000
-  PASS  admin stats reflect the real activity            105 ms  songs=8 users=4 playEvents=334 buckets=8
-  PASS  Clerk webhook sync (test-mode verifier) creates the mirror    29 ms  handled=user.created, unsigned rejected with 403
+  PASS  chat broadcasts to the room                        6 ms  author=E2E Guest
+  PASS  forced disconnect then resync restores full state   180 ms  queue=2 playing=true pos=2000 ms
+  PASS  GET /api/rooms/:id/messages returns the chat history    24 ms  1 messages
+  PASS  playlist create → add track → reorder             82 ms  tracks=2 durationMs=46000
+  PASS  admin stats reflect the real activity             97 ms  songs=8 users=4 playEvents=334 buckets=8
+  PASS  Clerk webhook sync (test-mode verifier) creates the mirror    28 ms  handled=user.created, unsigned rejected with 403
+  PASS  production refuses to boot with AUTH_MODE=demo (fail closed)   685 ms  exit=1 — Refusing to boot with NODE_ENV=production and AUTH_MODE=demo: demo sessi…
+  PASS  production refuses to boot on a committed default secret   728 ms  exit=1 — refused the committed placeholder
 
 -----------------------------
-steps: 20   PASS: 20   FAIL: 0
-step time total: 1022 ms   wall clock: 2202 ms
+steps: 22   PASS: 22   FAIL: 0
+step time total: 2326 ms   wall clock: 3376 ms
 RESULT: PASS
 ```
 
@@ -293,28 +295,40 @@ No `.env` file exists on disk (`ls .env client/.env server/.env` → all missing
 
 ### 1.8 clean-checkout reproduction — `git clone` → `npm ci` → every gate
 
-The strongest check the reviewer can repeat: clone the committed tree somewhere else, install from the
-lockfile, and run the same five gates. Run verbatim in `$LOCALAPPDATA/Temp/cadenza-clean`:
+The strongest check a reviewer can repeat: clone the committed tree somewhere else, install from the
+lockfile, and run the same gates. This is also where the previous version was **red**: the scan failed on a
+pristine clone because `VERIFY.md`'s own prose contained the literal pattern check 2 looks for. Cloned at
+`HEAD` = `9fcaec5` — the commit this section was measured on; the commit that pastes this text changes
+Markdown only.
 
 ```bash
+cd $LOCALAPPDATA/Temp
 git clone C:/Users/oliad/Desktop/portfolio-3pack/02-cadenza cadenza-clean
 cd cadenza-clean
-npm ci --no-audit --no-fund
+bash scripts/secret_scan.sh
 npm install-scripts ls      # -> "No packages with unreviewed install scripts."
+npm ci --no-audit --no-fund
 npm run lint && npm run typecheck && npm test && npm run build && npm run e2e
 ```
 
 ```
-CI_EXIT=0
+SCAN_EXIT=0        (1. ok  2. ok  3. ok → "secret scan clean")
+NPM_CI_EXIT=0
 LINT_EXIT=0
 TYPECHECK_EXIT=0
-TEST_EXIT=0        (15 server files / 169 tests + 11 client files / 96 tests)
-BUILD_EXIT=0
-E2E_EXIT=0         (steps: 20   PASS: 20   FAIL: 0)
+TEST_EXIT=0        (18 server files / 209 tests + 12 client files / 102 tests)
+BUILD_EXIT=0       (1787 modules → dist/assets/index-DqbDbANK.js 480.31 kB, gzip 146.94 kB;
+                    index-DRLNp1Of.css 21.63 kB, gzip 5.08 kB)
+E2E_EXIT=0         (steps: 22   PASS: 22   FAIL: 0   wall clock: 3376 ms)
 ```
 
 `npm ci` honoured the committed `allowScripts` entry, so the `esbuild` and `mongodb-memory-server`
-postinstalls ran on a fresh tree without any manual approval step.
+postinstalls ran on a fresh tree without any manual approval step, and the cached mongod 8.2.6 binary meant
+no re-download. The full log is reproducible from the commands above; every number in this section was
+copied out of that run.
+
+The final tree was re-verified after this evidence was pasted: three consecutive `npm run test` runs, each
+of which executes the scan again through `server/tests/unit/secret-scan.test.ts`.
 
 ## 4. Frontend boot for the live browser check
 
