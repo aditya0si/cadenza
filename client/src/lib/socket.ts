@@ -1,7 +1,16 @@
 import { io, type Socket } from 'socket.io-client';
-import { assetUrl } from './utils';
+import { API_ORIGIN } from './utils';
 
-const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL as string | undefined) ?? assetUrl('');
+/**
+ * The socket must reach the API host, never the host that served the bundle. `assetUrl('')` returns
+ * '' for an empty path and `io('')` silently falls back to the *current* origin, so a split
+ * deployment (client on Vercel, API on Render) — or the built preview, which has no `/socket.io`
+ * route — tried to upgrade ws://<client-host>/socket.io, got the SPA fallback's 200 instead of a
+ * 101, and realtime died with no visible error beyond the console. Derive the origin from the same
+ * source of truth as the REST client; `||` (not `??`) so an empty VITE_SOCKET_URL cannot win either.
+ * With a relative VITE_API_URL (dev proxy) API_ORIGIN is '' and the same-origin default is correct.
+ */
+const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL as string | undefined) || API_ORIGIN;
 
 export interface RoomSnapshotPayload {
   room: import('../types').RoomDto;

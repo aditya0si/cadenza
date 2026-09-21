@@ -1,4 +1,4 @@
-import { assetUrl } from './utils';
+import { API_ORIGIN } from './utils';
 import type {
   ActiveRoomRow,
   AlbumDto,
@@ -17,7 +17,7 @@ import type {
   UserDto,
 } from '../types';
 
-const API_URL = (import.meta.env.VITE_API_URL as string | undefined) ?? `${assetUrl('') || 'http://localhost:4000'}/api`;
+const API_URL = (import.meta.env.VITE_API_URL as string | undefined) || `${API_ORIGIN}/api`;
 
 export class ApiError extends Error {
   constructor(
