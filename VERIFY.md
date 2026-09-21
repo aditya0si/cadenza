@@ -58,28 +58,31 @@ tsc -p tsconfig.json --noEmit          # client
 
 ### 1.3 tests — `npm test`
 
-**Server: 15 files / 169 tests passed** (22.00 s)
+**Server: 18 files / 209 tests passed** (30.75 s)
 
 ```
- ✓ tests/realtime/socket.test.ts (18 tests)
- ✓ tests/integration/rooms-stats.test.ts (18 tests)
- ✓ tests/integration/media.test.ts (17 tests)
  ✓ tests/integration/catalog.test.ts (24 tests)
+ ✓ tests/integration/media.test.ts (17 tests)
  ✓ tests/integration/playlists.test.ts (17 tests)
- ✓ tests/integration/webhook.test.ts (12 tests)
  ✓ tests/integration/ratelimit.test.ts (3 tests)
- ✓ tests/unit/models.test.ts (8 tests)
- ✓ tests/unit/user-service.test.ts (8 tests)
- ✓ tests/unit/playback-clock.test.ts (9 tests)
- ✓ tests/unit/range.test.ts (9 tests)
- ✓ tests/unit/demo-token.test.ts (8 tests)
- ✓ tests/unit/media-signing.test.ts (7 tests)
+ ✓ tests/integration/rooms-stats.test.ts (22 tests)
+ ✓ tests/integration/webhook.test.ts (13 tests)
+ ✓ tests/realtime/limits.test.ts (5 tests)
+ ✓ tests/realtime/socket.test.ts (22 tests)
  ✓ tests/unit/dedupe.test.ts (7 tests)
+ ✓ tests/unit/demo-token.test.ts (16 tests)
+ ✓ tests/unit/env.test.ts (9 tests)
+ ✓ tests/unit/media-signing.test.ts (7 tests)
+ ✓ tests/unit/models.test.ts (9 tests)
+ ✓ tests/unit/playback-clock.test.ts (9 tests)
  ✓ tests/unit/presence.test.ts (4 tests)
-      Tests  169 passed (169)
+ ✓ tests/unit/range.test.ts (9 tests)
+ ✓ tests/unit/secret-scan.test.ts (6 tests)
+ ✓ tests/unit/user-service.test.ts (10 tests)
+      Tests  209 passed (209)
 ```
 
-**Client: 11 files / 96 tests passed**
+**Client: 12 files / 102 tests passed** (94.86 s; the jsdom environment dominates the wall clock)
 
 ```
  ✓ src/player/queue.test.ts (15 tests)
@@ -90,10 +93,11 @@ tsc -p tsconfig.json --noEmit          # client
  ✓ src/stores/libraryStore.test.ts (7 tests)
  ✓ src/components/TrackList.test.tsx (7 tests)
  ✓ src/components/PlayerBar.test.tsx (7 tests)
+ ✓ src/lib/socket.test.ts (6 tests)
  ✓ src/components/Waveform.test.tsx (6 tests)
  ✓ src/pages/SearchPage.test.tsx (6 tests)
  ✓ src/pages/SignInPage.test.tsx (5 tests)
-      Tests  96 passed (96)
+      Tests  102 passed (102)
 ```
 
 The realtime suite uses real `socket.io-client` connections against the running server (two and
@@ -107,13 +111,13 @@ tsc -p tsconfig.json                       # server → server/dist (exit 0)
 tsc -p tsconfig.json --noEmit && vite build # client
 vite v6.4.3 building for production...
 ✓ 1787 modules transformed.
-dist/index.html                   0.71 kB │ gzip:   0.41 kB
-dist/assets/index-yoOFsU89.css   21.60 kB │ gzip:   5.07 kB
-dist/assets/index-CsVncyx_.js   479.87 kB │ gzip: 146.78 kB
-✓ built in 3.61s
+dist/index.html                   0.72 kB │ gzip:   0.42 kB
+dist/assets/index-DRLNp1Of.css   21.63 kB │ gzip:   5.08 kB
+dist/assets/index-CqbDbANK.js   480.31 kB │ gzip: 146.94 kB
+✓ built in 7.73s
 ```
 
-### 1.5 end-to-end smoke — `npm run e2e` → **20/20 steps PASS**
+### 1.5 end-to-end smoke — `npm run e2e` → **22/22 steps PASS**
 
 `scripts/e2e_smoke.mjs` boots the **built** API (`server/dist`) plus an in-memory mongod, seeds the
 committed media library, signs in through the demo-session route and walks the real HTTP + Socket.IO
@@ -329,6 +333,32 @@ copied out of that run.
 
 The final tree was re-verified after this evidence was pasted: three consecutive `npm run test` runs, each
 of which executes the scan again through `server/tests/unit/secret-scan.test.ts`.
+
+### 1.9 three consecutive server-suite runs (flakiness check)
+
+A flaky gate is worse than a red one, so the whole server suite was run three times in a row on the final
+tree, with no retries and no test deselection:
+
+```
+=== SERVER SUITE RUN 1 ===
+ Test Files  18 passed (18)
+      Tests  209 passed (209)
+SERVER_RUN1_EXIT=0
+
+=== SERVER SUITE RUN 2 ===
+ Test Files  18 passed (18)
+      Tests  209 passed (209)
+SERVER_RUN2_EXIT=0
+
+=== SERVER SUITE RUN 3 ===
+ Test Files  18 passed (18)
+      Tests  209 passed (209)
+SERVER_RUN3_EXIT=0
+```
+
+The full root chain was then run once more on the same tree: `bash scripts/secret_scan.sh` → 0,
+`npm run lint` → 0, `npm run typecheck` → 0, `npm test` → 0 (209 + 102), `npm run build` → 0,
+`npm run e2e` → 0 (22/22).
 
 ## 4. Frontend boot for the live browser check
 
