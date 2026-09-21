@@ -78,3 +78,30 @@ describe('socket origin resolution', () => {
     expect(dialedUrl()).toBe('');
   });
 });
+
+/**
+ * The server refuses a socket payload over `SOCKET_MAX_PAYLOAD_BYTES` at the
+ * transport, so the only trace of *why* the connection dropped is the WebSocket
+ * close code inside socket.io's disconnect details. Without this mapping the UI
+ * saw a silent disconnect.
+ */
+describe('oversized payload close code', () => {
+  it('maps close code 1009 to a typed PAYLOAD_TOO_LARGE error', async () => {
+    const { payloadTooLargeError } = await loadSocketModule();
+    const typed = payloadTooLargeError({
+      description: 'websocket connection closed',
+      context: { code: 1009 },
+    });
+    expect(typed?.code).toBe('PAYLOAD_TOO_LARGE');
+    expect(typed?.message).toMatch(/larger than the server accepts/);
+  });
+
+  it('ignores every other drop', async () => {
+    const { payloadTooLargeError } = await loadSocketModule();
+    expect(payloadTooLargeError({ context: { code: 1000 } })).toBeNull();
+    expect(payloadTooLargeError({ context: {} })).toBeNull();
+    expect(payloadTooLargeError({ description: 'transport close' })).toBeNull();
+    expect(payloadTooLargeError(undefined)).toBeNull();
+    expect(payloadTooLargeError('transport close')).toBeNull();
+  });
+});

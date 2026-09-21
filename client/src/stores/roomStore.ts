@@ -4,6 +4,7 @@ import {
   emitWithAck,
   getSocket,
   newEventId,
+  payloadTooLargeError,
   type CadenzaSocket,
   type PlaybackStatePayload,
   type RoomSnapshotPayload,
@@ -87,10 +88,26 @@ export const useRoomStore = create<RoomStore>((set, get) => {
       on<{ error: { message: string } }>('room:error', (payload) =>
         dispatch({ type: 'status', payload: { status: 'error', error: payload.error.message } }),
       );
+      // The server evicts this user's sockets when they leave over REST, so the
+      // UI stops showing a room the server no longer considers them part of.
+      on<{ roomId: string; reason: string }>('room:evicted', () =>
+        dispatch({
+          type: 'status',
+          payload: { status: 'error', error: 'You left this room, so its live updates were stopped' },
+        }),
+      );
 
       // Reconnect → full resync, so a client that slept through events catches up.
       socket.on('connect', () => {
         void emitWithAck(socket as CadenzaSocket, 'room:resync', { roomId }).catch(() => undefined);
+      });
+
+      // A dropped connection has a reason, and the one worth naming is the
+      // server refusing an oversized payload (close code 1009).
+      socket.on('disconnect', (_reason: string, details?: unknown) => {
+        const oversized = payloadTooLargeError(details);
+        if (!oversized) return;
+        dispatch({ type: 'status', payload: { status: 'error', error: oversized.message } });
       });
 
       const ack = await emitWithAck(socket, 'room:join', { roomId });

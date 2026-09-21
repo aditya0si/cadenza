@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { AppError } from '../errors.js';
 import type { AuthenticatedUser } from '../auth/types.js';
 import { roomRepository, type RoomLean } from '../repositories/room.repository.js';
-import { messageRepository } from '../repositories/message.repository.js';
+import { messageRepository, type MessageLean } from '../repositories/message.repository.js';
 import { userRepository } from '../repositories/user.repository.js';
 import { songRepository } from '../repositories/song.repository.js';
 import { artistRepository } from '../repositories/artist.repository.js';
@@ -36,6 +36,12 @@ export interface RoomSummaryDto {
 export interface RealtimeBroadcaster {
   broadcastToRoom(roomId: string, event: string, payload: unknown): void;
   connectedUserIds(roomId: string): string[];
+  /**
+   * Drops every socket belonging to `userId` out of the Socket.IO room and out
+   * of presence, so a member who left over REST stops receiving that room's
+   * broadcasts. Returns how many sockets were evicted.
+   */
+  evictUserFromRoom(roomId: string, userId: string): Promise<number>;
 }
 
 export interface RoomSnapshot {
@@ -101,9 +107,9 @@ export class RoomService {
     });
   }
 
-  private requireMember(room: RoomLean, userId: string): void {
+  private requireMember(room: RoomLean, userId: string, message = 'Join the room before changing its playback'): void {
     if (!room.members.some((member) => String(member.userId) === userId)) {
-      throw AppError.forbidden('Join the room before changing its playback');
+      throw AppError.forbidden(message);
     }
   }
 
@@ -147,16 +153,41 @@ export class RoomService {
     return { ...result, items: summaries };
   }
 
+  /**
+   * The snapshot behind `GET /rooms/:id` and the socket `room:snapshot`.
+   *
+   * Chat is member-only, on both transports: a non-member gets a *public* room's
+   * metadata and queue (that is what the browse list is for) but never its
+   * messages, and a non-member of a private room gets 403. The socket path
+   * refuses a non-member `room:join` outright, and this is the same rule on the
+   * REST path.
+   */
   async snapshot(roomId: string, requester: AuthenticatedUser): Promise<RoomSnapshot> {
     const room = await roomRepository.findById(roomId);
     if (!room) throw AppError.notFound('Room not found');
-    const isMember = room.members.some((member) => String(member.userId) === requester.id);
-    if (!isMember && room.visibility === 'private') throw AppError.forbidden('This room is private');
+    if (this.isMember(room, requester.id)) return this.snapshotFor(room, 'member');
+    if (room.visibility === 'private') throw AppError.forbidden('This room is private');
+    return this.snapshotFor(room, 'public');
+  }
 
+  private isMember(room: RoomLean, userId: string): boolean {
+    return room.members.some((member) => String(member.userId) === userId);
+  }
+
+  /**
+   * `member`  — full view, chat included.
+   * `public`  — a non-member's view of a public room: metadata + queue, no chat.
+   * `departed`— the response to `leave`: the caller stopped being a member in
+   *             the same request, so they get the room metadata without chat
+   *             and without the private-room gate (they were just inside).
+   */
+  private async snapshotFor(room: RoomLean, view: 'member' | 'public' | 'departed'): Promise<RoomSnapshot> {
     const [members, queue, history] = await Promise.all([
       this.decorateMembers(room),
       this.decorateQueue(room.queue),
-      messageRepository.listByRoom({ roomId, limit: 50 }),
+      view === 'member'
+        ? messageRepository.listByRoom({ roomId: String(room._id), limit: 50 })
+        : Promise.resolve({ items: [] as MessageLean[], nextBefore: null, hasMore: false }),
     ]);
     const authors = await userRepository.findByIds([...new Set(history.items.map((message) => String(message.authorId)))]);
     const authorById = new Map(authors.map((user) => [String(user._id), user]));
@@ -166,7 +197,7 @@ export class RoomService {
         room,
         members,
         queue,
-        connectedUserIds: this.realtime()?.connectedUserIds(roomId) ?? [],
+        connectedUserIds: this.realtime()?.connectedUserIds(String(room._id)) ?? [],
       }),
       messages: history.items
         .slice()
@@ -232,7 +263,12 @@ export class RoomService {
         await roomRepository.transferHost(roomId, next.userId as Types.ObjectId);
       }
     }
-    const snapshot = await this.snapshot(roomId, requester);
+    // Membership is gone, so the socket must go with it: leaving over REST used
+    // to leave the socket in the Socket.IO room, where it kept receiving
+    // `chat:message` broadcasts it was no longer entitled to read.
+    await this.realtime()?.evictUserFromRoom(roomId, requester.id);
+    const updated = await this.requireRoom(roomId);
+    const snapshot = await this.snapshotFor(updated, 'departed');
     this.realtime()?.broadcastToRoom(roomId, 'presence', {
       roomId,
       connectedUserIds: this.realtime()?.connectedUserIds(roomId) ?? [],
@@ -249,7 +285,7 @@ export class RoomService {
     const song = await songRepository.findById(input.songId);
     if (!song) throw AppError.notFound('Song not found');
 
-    const claimed = await roomRepository.claimEvent(roomId, input.eventId);
+    const claimed = await roomRepository.claimEvent(roomId, requester.id, input.eventId);
     if (!claimed) {
       const current = await this.snapshot(roomId, requester);
       return { room: current.room, duplicate: true, song: null };
@@ -277,7 +313,7 @@ export class RoomService {
     if (!room.queue.some((entry) => String(entry.songId) === input.songId)) {
       throw AppError.notFound('That track is not in the room queue');
     }
-    const claimed = await roomRepository.claimEvent(roomId, input.eventId);
+    const claimed = await roomRepository.claimEvent(roomId, requester.id, input.eventId);
     if (!claimed) {
       const current = await this.snapshot(roomId, requester);
       return { room: current.room, duplicate: true, removed: false };
@@ -294,8 +330,9 @@ export class RoomService {
     query: { before?: Date | undefined; limit: number },
   ): Promise<{ items: MessageDto[]; nextBefore: string | null; hasMore: boolean }> {
     const room = await this.requireRoom(roomId);
-    const isMember = room.members.some((member) => String(member.userId) === requester.id);
-    if (!isMember && room.visibility === 'private') throw AppError.forbidden('This room is private');
+    // Chat history is member-only, exactly like the socket snapshot: a public
+    // room's metadata is readable, its conversation is not.
+    this.requireMember(room, requester.id, 'Join the room to read its chat history');
     const page = await messageRepository.listByRoom({ roomId, before: query.before, limit: query.limit });
     const authors = await userRepository.findByIds([...new Set(page.items.map((message) => String(message.authorId)))]);
     const authorById = new Map(authors.map((user) => [String(user._id), user]));

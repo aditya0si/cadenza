@@ -103,14 +103,25 @@ export const roomRepository = {
   },
 
   /**
-   * Atomically claims a client event id. Returns null when the id was already
-   * processed — the primitive behind "a duplicate queue:add never duplicates a
-   * track". The stored ring buffer is capped at 200 ids per room.
+   * Atomically claims a client event id **for one user**. Returns null when that
+   * user has already had the id processed — the primitive behind "a duplicate
+   * queue:add never duplicates a track". The stored ring buffer is capped at 200
+   * entries per room.
+   *
+   * The stored key is namespaced by user because event ids are generated per
+   * client: two listeners can legitimately pick the same id, and keying by
+   * `{roomId, eventId}` alone let the first client's replay swallow the second
+   * client's write (it was reported as `duplicate: true` and dropped).
    */
-  async claimEvent(id: string | Types.ObjectId, eventId: string): Promise<RoomLean | null> {
+  async claimEvent(
+    id: string | Types.ObjectId,
+    userId: string | Types.ObjectId,
+    eventId: string,
+  ): Promise<RoomLean | null> {
+    const claim = `${String(userId)}:${eventId}`;
     return Room.findOneAndUpdate(
-      { _id: id, processedEventIds: { $ne: eventId } },
-      { $push: { processedEventIds: { $each: [eventId], $slice: -200 } } },
+      { _id: id, processedEventIds: { $ne: claim } },
+      { $push: { processedEventIds: { $each: [claim], $slice: -200 } } },
       { new: true },
     ).lean<RoomLean>();
   },

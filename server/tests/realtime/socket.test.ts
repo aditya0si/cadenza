@@ -172,6 +172,51 @@ describe('queue propagation and idempotency', () => {
     expect(ack.error?.code).toBe('FORBIDDEN');
     await closeSockets(stranger);
   });
+
+  it('does not let one listener’s event id swallow another listener’s queue:add', async () => {
+    const room = (
+      await harness.request().post('/api/rooms').set(auth(hostToken)).send({ name: 'Shared Event Ids' }).expect(201)
+    ).body.room as RoomDto;
+    await harness.request().post(`/api/rooms/${room.id}/join`).set(auth(guestToken)).expect(200);
+
+    const host = await harness.connectSocket(hostToken);
+    const guest = await harness.connectSocket(guestToken);
+    await emitWithAck<Ack>(host, 'room:join', { roomId: room.id });
+    await emitWithAck<Ack>(guest, 'room:join', { roomId: room.id });
+
+    // Event ids are generated per client, so two listeners can collide on one.
+    const eventId = uniqueEventId('shared');
+    const fromGuest = await emitWithAck<Ack>(guest, 'queue:add', {
+      roomId: room.id,
+      songId: catalog.songIds[0],
+      eventId,
+    });
+    expect(fromGuest.ok).toBe(true);
+    expect(fromGuest.duplicate).toBe(false);
+
+    // The host reusing that id is a *different* event: it must be applied, not
+    // answered with `duplicate: true` and silently dropped.
+    const fromHost = await emitWithAck<Ack>(host, 'queue:add', {
+      roomId: room.id,
+      songId: catalog.songIds[1],
+      eventId,
+    });
+    expect(fromHost.ok).toBe(true);
+    expect(fromHost.duplicate).toBe(false);
+    expect(fromHost.queue?.map((song) => song.id)).toEqual([catalog.songIds[0], catalog.songIds[1]]);
+
+    // The guest's own replay is still a no-op.
+    const replay = await emitWithAck<Ack>(guest, 'queue:add', {
+      roomId: room.id,
+      songId: catalog.songIds[0],
+      eventId,
+    });
+    expect(replay.ok).toBe(true);
+    expect(replay.duplicate).toBe(true);
+    expect(replay.queue).toHaveLength(2);
+
+    await closeSockets(host, guest);
+  });
 });
 
 describe('server-authoritative playback', () => {
@@ -326,6 +371,98 @@ describe('chat', () => {
     }
     expect(codes).toContain('RATE_LIMITED');
     await closeSockets(host);
+  });
+
+  it('does not let one listener’s event id swallow another listener’s message', async () => {
+    const host = await harness.connectSocket(hostToken);
+    const guest = await harness.connectSocket(guestToken);
+    await emitWithAck<Ack>(host, 'room:join', { roomId });
+    await emitWithAck<Ack>(guest, 'room:join', { roomId });
+
+    const eventId = uniqueEventId('shared-chat');
+    const fromGuest = await emitWithAck<Ack>(guest, 'chat:message', { roomId, body: 'from the guest', eventId });
+    expect(fromGuest.ok).toBe(true);
+    expect(fromGuest.duplicate).toBeUndefined();
+    expect(fromGuest.message?.body).toBe('from the guest');
+
+    // The host reusing the guest's event id is a different event: it must be
+    // stored and broadcast, not answered with the guest's body.
+    const broadcast = awaitEvent<{ message: { body: string; author: { id: string } } }>(guest, 'chat:message');
+    const fromHost = await emitWithAck<Ack>(host, 'chat:message', { roomId, body: 'from the host', eventId });
+    expect(fromHost.ok).toBe(true);
+    expect(fromHost.duplicate).toBeUndefined();
+    expect(fromHost.message?.body).toBe('from the host');
+    expect((await broadcast).message.author.id).toBe(hostId);
+
+    // The guest's own replay is still a no-op that returns their own message.
+    const replay = await emitWithAck<Ack>(guest, 'chat:message', { roomId, body: 'from the guest', eventId });
+    expect(replay.ok).toBe(true);
+    expect(replay.duplicate).toBe(true);
+    expect(replay.message?.id).toBe(fromGuest.message?.id);
+
+    await closeSockets(host, guest);
+  });
+
+  it('answers an over-long body with a typed error instead of dropping the socket', async () => {
+    const host = await harness.connectSocket(hostToken);
+    await emitWithAck<Ack>(host, 'room:join', { roomId });
+
+    // 5 000 characters is over the 1 000 character body limit but well inside
+    // the transport bound, so it must come back as a typed rejection.
+    const tooLong = await emitWithAck<Ack>(host, 'chat:message', {
+      roomId,
+      body: 'x'.repeat(5_000),
+      eventId: uniqueEventId('chat'),
+    });
+    expect(tooLong.ok).toBe(false);
+    expect(tooLong.error?.code).toBe('VALIDATION_ERROR');
+    expect(host.connected).toBe(true);
+    await closeSockets(host);
+  });
+});
+
+describe('REST leave and socket membership', () => {
+  it('evicts the departed member’s socket so it stops receiving the room’s chat', async () => {
+    const room = (
+      await harness.request().post('/api/rooms').set(auth(hostToken)).send({ name: 'Eviction' }).expect(201)
+    ).body.room as RoomDto;
+    await harness.request().post(`/api/rooms/${room.id}/join`).set(auth(guestToken)).expect(200);
+
+    const host = await harness.connectSocket(hostToken);
+    const guest = await harness.connectSocket(guestToken);
+    await emitWithAck<Ack>(host, 'room:join', { roomId: room.id });
+    await emitWithAck<Ack>(guest, 'room:join', { roomId: room.id });
+    expect(harness.server.realtime.presence.connectedUserIds(room.id).sort()).toEqual([guestId, hostId].sort());
+
+    const evicted = awaitEvent<{ roomId: string; reason: string }>(guest, 'room:evicted');
+    const left = await harness.request().post(`/api/rooms/${room.id}/leave`).set(auth(guestToken)).expect(200);
+    expect(left.body.room.members.map((member: { userId: string }) => member.userId)).toEqual([hostId]);
+
+    // The eviction is part of the leave response, not a later cleanup.
+    expect((await evicted).roomId).toBe(room.id);
+    expect(harness.server.realtime.presence.connectedUserIds(room.id)).toEqual([hostId]);
+
+    let leaked = 0;
+    const countLeak = (): void => {
+      leaked += 1;
+    };
+    guest.on('chat:message', countLeak);
+    const broadcast = awaitEvent<{ message: { body: string } }>(host, 'chat:message');
+    await emitWithAck<Ack>(host, 'chat:message', {
+      roomId: room.id,
+      body: 'after the guest left',
+      eventId: uniqueEventId('chat'),
+    });
+    expect((await broadcast).message.body).toBe('after the guest left');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    guest.off('chat:message', countLeak);
+    expect(leaked).toBe(0);
+
+    // …and the socket can no longer read the room's chat over REST either.
+    const denied = await harness.request().get(`/api/rooms/${room.id}/messages`).set(auth(guestToken)).expect(403);
+    expect(denied.body.error.code).toBe('FORBIDDEN');
+
+    await closeSockets(host, guest);
   });
 });
 

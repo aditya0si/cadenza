@@ -39,8 +39,12 @@ export const messageRepository = {
     return created.toObject<MessageLean>();
   },
 
-  async findByEventId(roomId: string | Types.ObjectId, eventId: string): Promise<MessageLean | null> {
-    return Message.findOne({ roomId, eventId }).lean<MessageLean>();
+  async findByEventId(
+    roomId: string | Types.ObjectId,
+    authorId: string | Types.ObjectId,
+    eventId: string,
+  ): Promise<MessageLean | null> {
+    return Message.findOne({ roomId, authorId, eventId }).lean<MessageLean>();
   },
 
   async countByRoom(roomId: string | Types.ObjectId): Promise<number> {

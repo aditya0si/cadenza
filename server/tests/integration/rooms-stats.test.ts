@@ -99,6 +99,45 @@ describe('room lifecycle', () => {
     expect(response.body.error.code).toBe('FORBIDDEN');
   });
 
+  it('lets a member leave a private room and answers with the room metadata', async () => {
+    // Regression: `leave` used to re-read the snapshot *after* removing the
+    // membership, so a private room answered 403 to the member who was leaving it.
+    const room = await createRoomViaApi('Private Exit', 'private');
+    const left = await harness.request().post(`/api/rooms/${room.id}/leave`).set(auth(hostToken)).expect(200);
+    expect(left.body.room.id).toBe(room.id);
+    expect(left.body.room.members).toEqual([]);
+  });
+
+  it('keeps a public room’s chat member-only while its metadata stays readable', async () => {
+    const room = await createRoomViaApi('Open Mic');
+    await messageRepository.create({
+      roomId: new Types.ObjectId(room.id),
+      authorId: new Types.ObjectId(hostId),
+      body: 'members only',
+      eventId: 'public-chat-1',
+    });
+
+    // A non-member gets the browse view: metadata and queue, never the chat.
+    const snapshot = await harness.request().get(`/api/rooms/${room.id}`).set(auth(strangerToken)).expect(200);
+    expect(snapshot.body.room.id).toBe(room.id);
+    expect(snapshot.body.room.members).toHaveLength(1);
+    expect(snapshot.body.messages).toEqual([]);
+
+    // And the message-history endpoint is member-only, like the socket path.
+    const denied = await harness
+      .request()
+      .get(`/api/rooms/${room.id}/messages`)
+      .set(auth(strangerToken))
+      .expect(403);
+    expect(denied.body.error.code).toBe('FORBIDDEN');
+
+    // A member sees both.
+    const asMember = await harness.request().get(`/api/rooms/${room.id}/messages`).set(auth(hostToken)).expect(200);
+    expect(asMember.body.items.map((message: { body: string }) => message.body)).toEqual(['members only']);
+    const memberSnapshot = await harness.request().get(`/api/rooms/${room.id}`).set(auth(hostToken)).expect(200);
+    expect(memberSnapshot.body.messages.map((message: { body: string }) => message.body)).toEqual(['members only']);
+  });
+
   it('lists only public rooms and can filter to active ones', async () => {
     const response = await harness.request().get('/api/rooms?limit=50').set(auth(strangerToken)).expect(200);
     expect(response.body.items.length).toBeGreaterThan(0);
@@ -184,6 +223,51 @@ describe('room queue over REST', () => {
       .send({ songId: catalog.songIds[0], eventId: uniqueEventId('remove') })
       .expect(404);
     expect(missing.body.error.code).toBe('NOT_FOUND');
+  });
+
+  it('keys idempotency per member, so a shared event id is never swallowed', async () => {
+    const room = (await createRoomViaApi('Shared Keys')).id;
+    await harness.request().post(`/api/rooms/${room}/join`).set(auth(guestToken)).expect(200);
+
+    // Two clients can generate the same event id; each one is its own event.
+    const eventId = uniqueEventId('shared');
+    const guestAdd = await harness
+      .request()
+      .post(`/api/rooms/${room}/queue`)
+      .set(auth(guestToken))
+      .send({ songId: catalog.songIds[0], eventId })
+      .expect(201);
+    expect(guestAdd.body.duplicate).toBe(false);
+
+    const hostAdd = await harness
+      .request()
+      .post(`/api/rooms/${room}/queue`)
+      .set(auth(hostToken))
+      .send({ songId: catalog.songIds[1], eventId })
+      .expect(201);
+    expect(hostAdd.body.duplicate).toBe(false);
+    expect(hostAdd.body.room.queue).toHaveLength(2);
+
+    // Each client's own replay is still a no-op.
+    const replay = await harness
+      .request()
+      .post(`/api/rooms/${room}/queue`)
+      .set(auth(guestToken))
+      .send({ songId: catalog.songIds[0], eventId })
+      .expect(200);
+    expect(replay.body.duplicate).toBe(true);
+    expect(replay.body.room.queue).toHaveLength(2);
+  });
+
+  it('answers an oversized JSON body with 413, not 500', async () => {
+    const response = await harness
+      .request()
+      .post('/api/rooms')
+      .set(auth(hostToken))
+      .send({ name: 'x'.repeat(1_200_000) })
+      .expect(413);
+    expect(response.body.error.code).toBe('PAYLOAD_TOO_LARGE');
+    expect(response.body.error.message).toMatch(/1 MB/);
   });
 });
 

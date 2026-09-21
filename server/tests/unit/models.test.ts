@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import mongoose from 'mongoose';
 import { inject } from 'vitest';
-import { Album, Artist, Playlist, Room, Song, User } from '../../src/models/index.js';
+import { Album, Artist, Message, Playlist, Room, Song, User } from '../../src/models/index.js';
 
 const mongoUri = inject('mongoUri');
 
@@ -141,5 +141,17 @@ describe('Playlist and Room models', () => {
 
     const indexes = await Room.collection.indexes();
     expect(indexes.some((index) => index.key['members.userId'] === 1)).toBe(true);
+  });
+
+  it('keys chat idempotency by (room, author, event) so clients cannot collide', async () => {
+    await Message.create({
+      roomId: hex(),
+      authorId: hex(),
+      body: 'indexed',
+      eventId: `evt-${hex()}`,
+    });
+    const indexes = await Message.collection.indexes();
+    const unique = indexes.find((index) => index.unique === true && index.key.roomId === 1);
+    expect(unique?.key).toEqual({ roomId: 1, authorId: 1, eventId: 1 });
   });
 });

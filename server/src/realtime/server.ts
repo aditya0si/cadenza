@@ -4,7 +4,7 @@ import type { Server as HttpServer } from 'node:http';
 import type { AppContext } from '../context.js';
 import { AppError, isAppError } from '../errors.js';
 import { roomRepository } from '../repositories/room.repository.js';
-import { messageRepository } from '../repositories/message.repository.js';
+import { messageRepository, type MessageLean } from '../repositories/message.repository.js';
 import { songRepository } from '../repositories/song.repository.js';
 import type { RealtimeBroadcaster } from '../services/room.service.js';
 import { EventDeduplicator, TokenBucket } from './dedupe.js';
@@ -85,6 +85,29 @@ const toAckError = (error: unknown): AckPayload => {
   };
 };
 
+/**
+ * Client event ids are generated per client, so every idempotency key is
+ * namespaced by user: two listeners can legitimately pick the same id, and one
+ * client's replay must never be treated as another client's event.
+ */
+const eventKey = (userId: string, eventId: string): string => `${userId}:${eventId}`;
+
+const isDuplicateKeyError = (error: unknown): boolean =>
+  typeof error === 'object' && error !== null && (error as { code?: number }).code === 11000;
+
+/**
+ * `ws` refuses a frame larger than `maxPayload` with this message, which is the
+ * only place a payload-size refusal is visible on the server (the transport
+ * closes the socket before any socket.io handler runs).
+ */
+const isMaxPayloadError = (error: unknown): boolean =>
+  error instanceof Error && /max payload size exceeded/i.test(error.message);
+
+interface RawTransportSocket {
+  on(event: 'error', handler: (error: unknown) => void): void;
+  on(event: 'close', handler: (code: number) => void): void;
+}
+
 /** Room document playback row → the pure clock anchor used by the playback helpers. */
 const anchorOf = (room: { playback: { trackId?: Types.ObjectId | null; isPlaying: boolean; positionMs: number; serverTs: Date; updatedBy?: Types.ObjectId | null } }): PlaybackAnchor => ({
   trackId: room.playback.trackId ? String(room.playback.trackId) : null,
@@ -116,12 +139,31 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
     },
     pingInterval: 20_000,
     pingTimeout: 25_000,
+    // Hard ceiling on one socket payload. socket.io's default is 1 MB, which is
+    // buffered *before* it is refused, so a single 1.2 MB emit silently killed
+    // the connection. The bound is the memory guard; the hook below makes the
+    // refusal typed instead of silent.
+    maxHttpBufferSize: ctx.env.SOCKET_MAX_PAYLOAD_BYTES,
+  });
+
+  io.engine.on('connection', (engineSocket) => {
+    const raw = (engineSocket.transport as { socket?: RawTransportSocket }).socket;
+    raw?.on('error', (error) => {
+      if (!isMaxPayloadError(error)) return;
+      ctx.logger.warn(
+        { code: 'PAYLOAD_TOO_LARGE', limitBytes: ctx.env.SOCKET_MAX_PAYLOAD_BYTES, transport: engineSocket.transport.name },
+        'socket payload refused: it exceeds SOCKET_MAX_PAYLOAD_BYTES',
+      );
+    });
   });
 
   const presence = new PresenceRegistry();
   const playbackDedupe = new EventDeduplicator(200);
   const chatBucket = new TokenBucket(ctx.env.SOCKET_CHAT_BURST, ctx.env.SOCKET_CHAT_REFILL_PER_SEC);
   const queueBucket = new TokenBucket(ctx.env.SOCKET_QUEUE_BURST, ctx.env.SOCKET_QUEUE_REFILL_PER_SEC);
+  // Drift reports are the third client-driven channel: unbucketed, one client
+  // could flood the server with them as fast as it can emit.
+  const reportBucket = new TokenBucket(ctx.env.SOCKET_REPORT_BURST, ctx.env.SOCKET_REPORT_REFILL_PER_SEC);
 
   const emitPresence = (roomId: string): void => {
     io.to(roomId).emit('presence', { roomId, connectedUserIds: presence.connectedUserIds(roomId) });
@@ -133,6 +175,25 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
     },
     connectedUserIds(roomId: string): string[] {
       return presence.connectedUserIds(roomId);
+    },
+    /**
+     * REST `leave` and a socket `room:leave` must have the same effect. Without
+     * this the departed member's socket stayed in the Socket.IO room and kept
+     * receiving `chat:message` broadcasts — a one-way read leak.
+     */
+    async evictUserFromRoom(roomId: string, userId: string): Promise<number> {
+      const sockets = await io.in(roomId).fetchSockets();
+      let evicted = 0;
+      for (const remote of sockets) {
+        const socketData = remote.data as SocketData | undefined;
+        if (socketData?.user?.id !== userId) continue;
+        await remote.leave(roomId);
+        presence.remove(roomId, remote.id);
+        remote.emit('room:evicted', { roomId, reason: 'left' });
+        evicted += 1;
+      }
+      if (evicted > 0) emitPresence(roomId);
+      return evicted;
     },
   };
 
@@ -226,7 +287,7 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
         const eventId = readEventId(payload);
         const room = await ctx.services.rooms.requireMembership(roomId, user.id);
         if (!room.playback.trackId) throw AppError.conflict('Queue a track before starting playback');
-        if (!playbackDedupe.claim(roomId, eventId)) return { ok: true, duplicate: true };
+        if (!playbackDedupe.claim(roomId, eventKey(user.id, eventId))) return { ok: true, duplicate: true };
 
         const song = await songRepository.findById(room.playback.trackId);
         const positionMs = clampPosition(readPosition(payload), song?.durationMs ?? 0);
@@ -252,7 +313,7 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
         const roomId = readRoomId(payload);
         const eventId = readEventId(payload);
         const room = await ctx.services.rooms.requireMembership(roomId, user.id);
-        if (!playbackDedupe.claim(roomId, eventId)) return { ok: true, duplicate: true };
+        if (!playbackDedupe.claim(roomId, eventKey(user.id, eventId))) return { ok: true, duplicate: true };
 
         const authoritative = projectPosition(anchorOf(room));
         const now = Date.now();
@@ -278,7 +339,7 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
         const eventId = readEventId(payload);
         const room = await ctx.services.rooms.requireMembership(roomId, user.id);
         if (!room.playback.trackId) throw AppError.conflict('Nothing is queued to seek within');
-        if (!playbackDedupe.claim(roomId, eventId)) return { ok: true, duplicate: true };
+        if (!playbackDedupe.claim(roomId, eventKey(user.id, eventId))) return { ok: true, duplicate: true };
 
         const song = await songRepository.findById(room.playback.trackId);
         const positionMs = clampPosition(readPosition(payload), song?.durationMs ?? 0);
@@ -320,7 +381,7 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
         }
         const song = await songRepository.findById(songId);
         if (!song) throw AppError.notFound('Song not found');
-        if (!playbackDedupe.claim(roomId, eventId)) return { ok: true, duplicate: true };
+        if (!playbackDedupe.claim(roomId, eventKey(user.id, eventId))) return { ok: true, duplicate: true };
 
         const now = Date.now();
         await roomRepository.updatePlayback(roomId, {
@@ -347,6 +408,9 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
       void respond(ack, async () => {
         const roomId = readRoomId(payload);
         const room = await ctx.services.rooms.requireMembership(roomId, user.id);
+        if (!reportBucket.take(socket.id)) {
+          throw new AppError('RATE_LIMITED', 'Slow down: too many drift reports in a row');
+        }
         const clientPositionMs = readPosition(payload);
         const anchor = anchorOf(room);
         const now = Date.now();
@@ -410,30 +474,41 @@ export function createRealtimeServer(httpServer: HttpServer, ctx: AppContext): R
           throw new AppError('RATE_LIMITED', 'Slow down: too many messages in a row');
         }
 
-        const existing = await messageRepository.findByEventId(roomId, eventId);
+        const toMessage = (row: MessageLean) => ({
+          id: String(row._id),
+          roomId,
+          body: row.body,
+          createdAt: new Date(row.createdAt).toISOString(),
+          author: { id: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl },
+        });
+
+        // Idempotency is per (room, author, event): a different listener using
+        // the same event id is a *different* event and must not be swallowed.
+        const existing = await messageRepository.findByEventId(roomId, user.id, eventId);
         if (existing) {
-          const message = {
-            id: String(existing._id),
-            roomId,
-            body: existing.body,
-            createdAt: new Date(existing.createdAt).toISOString(),
-            author: { id: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl },
-          };
-          return { ok: true, duplicate: true, message };
+          return { ok: true, duplicate: true, message: toMessage(existing) };
         }
 
-        const created = await messageRepository.create({
-          roomId: new Types.ObjectId(roomId),
-          authorId: new Types.ObjectId(user.id),
-          body: body.trim(),
-          eventId,
-        });
+        let created: MessageLean;
+        try {
+          created = await messageRepository.create({
+            roomId: new Types.ObjectId(roomId),
+            authorId: new Types.ObjectId(user.id),
+            body: body.trim(),
+            eventId,
+          });
+        } catch (error) {
+          // Two retries of the same event can race between the read above and
+          // this write; the unique index { roomId, authorId, eventId } decides
+          // and the loser answers with the winner's row instead of an error.
+          if (!isDuplicateKeyError(error)) throw error;
+          const winner = await messageRepository.findByEventId(roomId, user.id, eventId);
+          if (!winner) throw error;
+          return { ok: true, duplicate: true, message: toMessage(winner) };
+        }
+
         const message = {
-          id: String(created._id),
-          roomId,
-          body: created.body,
-          createdAt: new Date(created.createdAt).toISOString(),
-          author: { id: user.id, displayName: user.displayName, avatarUrl: user.avatarUrl },
+          ...toMessage(created),
           clientSentAt: typeof (payload as ChatPayload | undefined)?.clientSentAt === 'number' ? (payload as ChatPayload).clientSentAt : null,
         };
         io.to(roomId).emit('chat:message', { message });

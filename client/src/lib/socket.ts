@@ -33,6 +33,7 @@ export interface ServerToClientEvents {
   'track:changed': (payload: { roomId: string; songId: string; changedBy: string }) => void;
   'chat:message': (payload: { message: import('../types').MessageDto }) => void;
   presence: (payload: { roomId: string; connectedUserIds: string[] }) => void;
+  'room:evicted': (payload: { roomId: string; reason: string }) => void;
   'room:error': (payload: { ok: false; error: { code: string; message: string }; roomId: string | null }) => void;
 }
 
@@ -96,6 +97,25 @@ export const disconnectSocket = (): void => {
 /** Client-side idempotency key for every mutating event. */
 export const newEventId = (prefix: string): string =>
   `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+/** The WebSocket close code for "message too big". */
+export const OVERSIZED_PAYLOAD_CLOSE_CODE = 1009;
+
+/**
+ * Why a connection dropped is only visible in socket.io's disconnect `details`.
+ * The one reason that needs its own message is the server's `maxHttpBufferSize`
+ * bound: the transport refuses an oversized frame and closes with 1009, which
+ * otherwise looks exactly like a silent disconnect. Mapping it to a typed error
+ * lets the UI say what happened.
+ */
+export const payloadTooLargeError = (details: unknown): { code: 'PAYLOAD_TOO_LARGE'; message: string } | null => {
+  const code = (details as { context?: { code?: number } } | undefined)?.context?.code;
+  if (code !== OVERSIZED_PAYLOAD_CLOSE_CODE) return null;
+  return {
+    code: 'PAYLOAD_TOO_LARGE',
+    message: 'That payload was larger than the server accepts, so the connection was closed. Send less at once.',
+  };
+};
 
 export const emitWithAck = (
   target: CadenzaSocket,

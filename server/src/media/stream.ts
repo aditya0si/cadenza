@@ -28,7 +28,9 @@ export function sendMediaFile(req: Request, res: Response, file: MediaFileSlice)
 
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Content-Type', file.contentType);
-  // Signed URLs are short-lived and per-user: never let a shared cache keep them.
+  // Signed URLs are short-lived and *bearer-style*: the signature covers the
+  // song id and expiry, not the caller, so anyone holding the URL can stream it.
+  // Never let a shared cache keep one.
   res.setHeader('Cache-Control', 'private, no-store');
 
   if (range === null) {

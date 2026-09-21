@@ -13,7 +13,10 @@ const messageSchema = new Schema(
 
 // Chat history is always read newest-first for one room.
 messageSchema.index({ roomId: 1, createdAt: -1 });
-messageSchema.index({ roomId: 1, eventId: 1 }, { unique: true });
+// Idempotency is per (room, author, event): event ids are generated per client,
+// so two listeners may legitimately pick the same id — and a replay by one
+// client must never be answered with another client's message.
+messageSchema.index({ roomId: 1, authorId: 1, eventId: 1 }, { unique: true });
 
 export type MessageDocument = InferSchemaType<typeof messageSchema>;
 export type MessageModel = Model<MessageDocument>;
