@@ -7,6 +7,9 @@ import { Album, Artist, Playlist, Room, Song, User } from '../../src/models/inde
 const mongoUri = inject('mongoUri');
 
 beforeAll(async () => {
+  // See user-service.test.ts: one fork for all files + mongoose's singleton default connection
+  // means an open connection from an earlier file would make this `dbName` a silent no-op.
+  if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
   await mongoose.connect(mongoUri, { dbName: `cadenza_models_${randomBytes(4).toString('hex')}` });
   // Force index creation so text-index assertions are meaningful.
   await Promise.all([User.init(), Artist.init(), Album.init(), Song.init(), Playlist.init(), Room.init()]);

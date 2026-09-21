@@ -92,6 +92,34 @@ describe('webhook sync over the test-mode verifier', () => {
     expect(await userRepository.findByClerkId('user_webhook_1')).toBeNull();
   });
 
+  it('refuses a second subject that presents an email another mirror already owns', async () => {
+    // Two Clerk ids for one address: the mirror is keyed by clerkId but owns a unique email, and the
+    // local row is the account (its playlists, rooms and plays). The second subject must get a typed
+    // 409 instead of a raw driver error, and must never inherit the first subject's row.
+    const owner = clerkUserEvent('user_webhook_collide_a', 'collide@cadenza.test');
+    await harness
+      .request()
+      .post('/api/webhooks/clerk')
+      .set('content-type', 'application/json')
+      .set('x-cadenza-signature', sign(owner))
+      .send(JSON.stringify(owner))
+      .expect(200);
+
+    const claimant = clerkUserEvent('user_webhook_collide_b', 'collide@cadenza.test');
+    const response = await harness
+      .request()
+      .post('/api/webhooks/clerk')
+      .set('content-type', 'application/json')
+      .set('x-cadenza-signature', sign(claimant))
+      .send(JSON.stringify(claimant))
+      .expect(409);
+
+    expect(response.body.error.code).toBe('CONFLICT');
+    expect(response.body.error.details).toEqual({ keys: ['email'] });
+    expect(await userRepository.findByClerkId('user_webhook_collide_a')).not.toBeNull();
+    expect(await userRepository.findByClerkId('user_webhook_collide_b')).toBeNull();
+  });
+
   it('rejects a missing or wrong signature before touching the database', async () => {
     const payload = clerkUserEvent('user_webhook_forged', 'forged@cadenza.test');
 
