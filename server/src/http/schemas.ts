@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { decodeMessageCursor, type MessageCursor } from '../repositories/message.repository.js';
 
 /**
  * Every endpoint validates its input with one of these schemas. Coercion is
@@ -99,7 +100,19 @@ export const queueMutationBody = z.object({
 });
 
 export const messagesQuery = z.object({
-  before: z.string().datetime({ offset: true }).optional(),
+  /**
+   * Opaque keyset cursor minted by this API (`nextBefore`). It packs the
+   * timestamp *and* the message id, because two messages can share a
+   * millisecond and a timestamp alone cannot say where a page ended.
+   */
+  before: z
+    .string()
+    .trim()
+    .min(1)
+    .max(160)
+    .transform((value) => decodeMessageCursor(value))
+    .refine((cursor): cursor is MessageCursor => cursor !== null, { message: 'must be a cursor returned by this API' })
+    .optional(),
   limit: z.coerce.number().int().min(1).max(100).default(30),
 });
 

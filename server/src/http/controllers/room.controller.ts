@@ -56,7 +56,9 @@ export const createRoomController = (ctx: AppContext) => ({
   async messages(req: Request, res: Response): Promise<void> {
     const q = query<MessagesQuery>(req);
     const page = await ctx.services.rooms.history(req.params.id ?? '', requireUser(req), {
-      before: q.before ? new Date(q.before) : undefined,
+      // Already validated and decoded by `messagesQuery`; an unparseable cursor
+      // is answered with 400 before it ever reaches the service.
+      before: q.before,
       limit: q.limit,
     });
     res.json(page);

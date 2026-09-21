@@ -11,8 +11,10 @@ const messageSchema = new Schema(
   { timestamps: true, collection: 'messages' },
 );
 
-// Chat history is always read newest-first for one room.
-messageSchema.index({ roomId: 1, createdAt: -1 });
+// Chat history is always read newest-first for one room. The sort is
+// `(createdAt, _id)` — `_id` is the tie-break for messages that share a
+// millisecond — so the index carries both keys and the sort stays index-backed.
+messageSchema.index({ roomId: 1, createdAt: -1, _id: -1 });
 // Idempotency is per (room, author, event): event ids are generated per client,
 // so two listeners may legitimately pick the same id — and a replay by one
 // client must never be answered with another client's message.

@@ -3,7 +3,7 @@ import { Types } from 'mongoose';
 import { AppError } from '../errors.js';
 import type { AuthenticatedUser } from '../auth/types.js';
 import { roomRepository, type RoomLean } from '../repositories/room.repository.js';
-import { messageRepository, type MessageLean } from '../repositories/message.repository.js';
+import { messageRepository, type MessageCursor, type MessageLean } from '../repositories/message.repository.js';
 import { userRepository } from '../repositories/user.repository.js';
 import { songRepository } from '../repositories/song.repository.js';
 import { artistRepository } from '../repositories/artist.repository.js';
@@ -327,7 +327,7 @@ export class RoomService {
   async history(
     roomId: string,
     requester: AuthenticatedUser,
-    query: { before?: Date | undefined; limit: number },
+    query: { before?: MessageCursor | undefined; limit: number },
   ): Promise<{ items: MessageDto[]; nextBefore: string | null; hasMore: boolean }> {
     const room = await this.requireRoom(roomId);
     // Chat history is member-only, exactly like the socket snapshot: a public

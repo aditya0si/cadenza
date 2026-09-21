@@ -218,7 +218,7 @@ verbatim into `VERIFY.md`.
 |---|---|
 | `npm run lint` | 0 errors, 0 warnings (server + client) |
 | `npm run typecheck` | 0 errors (`tsc` server build config, server test config, client) |
-| `npm run test` (server) | 18 files, 209 tests passed |
+| `npm run test` (server) | 18 files, 212 tests passed |
 | `npm run test` (client) | 12 files, 102 tests passed |
 | `npm run build` | server `tsc` clean; client 1787 modules → 480.31 kB JS (146.94 kB gzip) + 21.63 kB CSS (5.08 kB gzip) |
 | `npm run e2e` | 22/22 steps PASS, wall clock 3.84 s |

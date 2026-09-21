@@ -4,6 +4,7 @@ import { Types } from 'mongoose';
 import { createTestHarness, type TestHarness } from '../helpers/harness.js';
 import { createRoom, seedCatalog, uniqueEventId, type SeededCatalog } from '../helpers/factory.js';
 import { messageRepository } from '../../src/repositories/message.repository.js';
+import { Message } from '../../src/models/index.js';
 import { roomRepository } from '../../src/repositories/room.repository.js';
 import type { RoomDto } from '../../src/http/serializers.js';
 
@@ -321,6 +322,151 @@ describe('chat history pagination', () => {
       .set(auth(hostToken))
       .expect(400);
     expect(response.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('rejects a timestamp-only cursor instead of half-honouring it', async () => {
+    // A bare timestamp cannot say *which* message a page ended on, so it cannot
+    // express a position inside a group of same-millisecond messages: honouring
+    // it would either re-serve or silently skip that group.
+    const response = await harness
+      .request()
+      .get(`/api/rooms/${roomId}/messages?before=${encodeURIComponent('2026-01-01T00:00:00.000Z')}`)
+      .set(auth(hostToken))
+      .expect(400);
+    expect(response.body.error.code).toBe('VALIDATION_ERROR');
+  });
+});
+
+describe('chat history ordering when timestamps tie', () => {
+  /**
+   * Wall-clock time cannot order two messages written in the same millisecond,
+   * so history order has to fall back to a stable key (`_id`) — and the
+   * pagination cursor has to carry that key too, or a page boundary landing
+   * inside a tie group skips the rest of it. This is the defect the Linux CI
+   * runner exposed: there the five seeded messages landed in the same
+   * millisecond, the tie order was undefined, and page two came back in the
+   * wrong order. Every timestamp here is set explicitly, so the tie is real on
+   * every platform and every run — nothing depends on how fast the machine is.
+   */
+  const olderTie = new Date('2025-12-31T23:59:59.500Z');
+  const newerTie = new Date('2026-01-01T00:00:00.000Z');
+  /** Newest first: newer group, then `_id` descending inside a group. */
+  const expectedOrder = ['tie-new-1', 'tie-new-0', 'tie-old-2', 'tie-old-1', 'tie-old-0'];
+  let roomId: string;
+
+  /**
+   * Hand-built message id: 4 bytes of the row's own timestamp, 5 fixed bytes,
+   * then a counter — so a higher `index` always sorts higher, independent of
+   * the clock and of which platform the suite runs on.
+   */
+  const tiedObjectId = (createdAt: Date, index: number): Types.ObjectId =>
+    new Types.ObjectId(
+      `${Math.floor(createdAt.getTime() / 1000)
+        .toString(16)
+        .padStart(8, '0')}${'00'.repeat(5)}${index.toString(16).padStart(6, '0')}`,
+    );
+
+  beforeAll(async () => {
+    roomId = (await createRoomViaApi('Tied Timestamps')).id;
+    const createdAtByIndex = [olderTie, olderTie, olderTie, newerTie, newerTie];
+    await Message.create(
+      expectedOrder
+        .slice()
+        .reverse()
+        .map((body, index) => ({
+          _id: tiedObjectId(createdAtByIndex[index] as Date, index),
+          roomId: new Types.ObjectId(roomId),
+          authorId: new Types.ObjectId(hostId),
+          body,
+          eventId: `tie-${index}`,
+          createdAt: createdAtByIndex[index] as Date,
+        })),
+    );
+
+    // Guard the fixture itself: if the timestamps are not tied the way this
+    // test claims, the assertions below would prove nothing. Two timestamps,
+    // shared by exactly three and two rows.
+    const stored = await Message.find({ roomId: new Types.ObjectId(roomId) })
+      .select('createdAt')
+      .lean<{ createdAt: Date }[]>();
+    const sharing = (timestamp: Date) => stored.filter((row) => row.createdAt.getTime() === timestamp.getTime()).length;
+    expect([sharing(olderTie), sharing(newerTie)]).toEqual([3, 2]);
+  });
+
+  const historyPage = async (cursor: string | null, limit: number) =>
+    (
+      await harness
+        .request()
+        .get(
+          `/api/rooms/${roomId}/messages?limit=${limit}${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`,
+        )
+        .set(auth(hostToken))
+        .expect(200)
+    ).body as { items: { body: string }[]; nextBefore: string | null; hasMore: boolean };
+
+  const bodiesOf = (page: { items: { body: string }[] }) => page.items.map((message) => message.body);
+
+  it('orders same-millisecond messages deterministically and pages across the tie', async () => {
+    const first = await historyPage(null, 2);
+    expect(bodiesOf(first)).toEqual(['tie-new-1', 'tie-new-0']);
+    expect(first.hasMore).toBe(true);
+
+    const second = await historyPage(first.nextBefore, 2);
+    expect(bodiesOf(second)).toEqual(['tie-old-2', 'tie-old-1']);
+    expect(second.hasMore).toBe(true);
+
+    // This page boundary sits *inside* the older tie group: a cursor carrying
+    // only `createdAt` cannot express it, and the remaining message disappears.
+    const third = await historyPage(second.nextBefore, 2);
+    expect(bodiesOf(third)).toEqual(['tie-old-0']);
+    expect(third.hasMore).toBe(false);
+    expect(third.nextBefore).toBeNull();
+
+    // Same cursor, same page: the order is stable, not merely "whatever Mongo
+    // happened to return this time".
+    const repeated = await historyPage(first.nextBefore, 2);
+    expect(bodiesOf(repeated)).toEqual(bodiesOf(second));
+
+    // No overlap, no gap: walking the pages yields every message exactly once.
+    expect([...bodiesOf(first), ...bodiesOf(second), ...bodiesOf(third)]).toEqual(expectedOrder);
+  });
+
+  it('walks a single tie group one message at a time with a distinct cursor per message', async () => {
+    const tiedRoom = (await createRoomViaApi('One Millisecond')).id;
+    // Ids are offset from the previous group's: `_id` is unique per collection,
+    // not per room, and the walk below must not share rows with that test.
+    await Message.create(
+      ['same-ms-0', 'same-ms-1', 'same-ms-2'].map((body, index) => ({
+        _id: tiedObjectId(olderTie, index + 0x10),
+        roomId: new Types.ObjectId(tiedRoom),
+        authorId: new Types.ObjectId(hostId),
+        body,
+        eventId: `same-ms-${index}`,
+        createdAt: olderTie,
+      })),
+    );
+
+    const page = async (cursor: string | null) =>
+      (
+        await harness
+          .request()
+          .get(`/api/rooms/${tiedRoom}/messages?limit=1${cursor ? `&before=${encodeURIComponent(cursor)}` : ''}`)
+          .set(auth(hostToken))
+          .expect(200)
+      ).body as { items: { body: string }[]; nextBefore: string | null; hasMore: boolean };
+
+    const first = await page(null);
+    expect(bodiesOf(first)).toEqual(['same-ms-2']);
+    const second = await page(first.nextBefore);
+    expect(bodiesOf(second)).toEqual(['same-ms-1']);
+    const third = await page(second.nextBefore);
+    expect(bodiesOf(third)).toEqual(['same-ms-0']);
+    expect(third.hasMore).toBe(false);
+    expect(third.nextBefore).toBeNull();
+
+    // Three rows share one timestamp, yet each page ends on a *different*
+    // message: the cursors must differ, otherwise the walk cannot advance.
+    expect(first.nextBefore).not.toBe(second.nextBefore);
   });
 });
 

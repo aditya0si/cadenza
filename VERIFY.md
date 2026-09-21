@@ -496,6 +496,23 @@ has a test that failed before the fix (see §6):
     disconnect with nothing to act on. Now `SOCKET_MAX_PAYLOAD_BYTES` (64 kB default) bounds it, the server
     logs a typed `PAYLOAD_TOO_LARGE` warning, the client sees WebSocket close code 1009, and
     `client/src/lib/socket.ts` maps that to a typed error instead of a silent drop.
+17. **Chat history had no defined order for messages written in the same millisecond, and paging across
+    such a group skipped messages.** `messageRepository.listByRoom` sorted on `{createdAt: -1}` alone and
+    `nextBefore` *was* that timestamp, so two messages sharing a millisecond tied and Mongo was free to
+    return them in any order (the order differs between an index scan and a collection scan, and between
+    platforms), while the next page asked for `createdAt < before` and therefore dropped every remaining
+    message of the group the cursor had landed in. The GitHub Actions run at `0e34573` failed exactly here —
+    `chat history pagination > pages backwards with a cursor and no overlap`, page two returned
+    `['message 1', 'message 2']` against `['message 2', 'message 1']` — while the same suite was green on
+    Windows, where the seeded messages happened to differ by a millisecond. History now orders on the pair
+    `(createdAt, _id)` (the index is `{roomId: 1, createdAt: -1, _id: -1}`) and the opaque `before` /
+    `nextBefore` cursor packs both keys (`<ISO createdAt>|<message id>`), so a page boundary can land inside
+    a tie group and still resume exactly; a timestamp-only cursor is refused with `400` rather than
+    half-honoured. Two tests in `server/tests/integration/rooms-stats.test.ts` fail against the old code
+    (`expected [] to deeply equal [ 'tie-old-0' ]` — the skipped message) and pass after it, with `createdAt`
+    set explicitly so the tie is real on every platform. Post-fix, on the final tree: three consecutive
+    server-suite runs at 18 files / 212 tests, and `lint` 0, `typecheck` 0, `npm test` 0 (212 + 102),
+    `build` 0, `e2e` 0 (22/22), secret scan 0.
 
 ## 6. Test files modified while chasing reds (full disclosure)
 
@@ -542,6 +559,17 @@ Product code changed to satisfy existing/new assertions: `server/src/config/env.
 `server/src/services/room.service.ts`, `server/src/realtime/server.ts`,
 `server/src/repositories/{room,message}.repository.ts`, `server/src/models/message.model.ts`,
 `server/src/media/stream.ts` (comment only), `client/src/lib/socket.ts`, `client/src/stores/roomStore.ts`.
+
+### 6.2 the platform-dependent ordering fix (same rules: nothing deleted, skipped or relaxed)
+
+| File | Change | Why |
+|---|---|---|
+| `server/tests/integration/rooms-stats.test.ts` | +3 tests (22 → 25): two same-millisecond ordering/pagination tests and one cursor-contract test; no existing assertion was touched | new coverage for the fix in §5 item 17. The fixture inserts its own rows with an explicit `createdAt` (and a hand-built `_id`), so the tie exists on every platform and in every run instead of depending on wall-clock timing; a `beforeAll` guard asserts the rows really do share the two timestamps, so the test cannot go vacuous |
+
+Product code changed for this fix: `server/src/repositories/message.repository.ts` (sort key, cursor
+codec, keyset filter), `server/src/models/message.model.ts` (index), `server/src/http/schemas.ts` (cursor
+decoding), `server/src/http/controllers/room.controller.ts` and `server/src/services/room.service.ts`
+(pass the decoded cursor through).
 
 ## 7. Not verified / known gaps
 
